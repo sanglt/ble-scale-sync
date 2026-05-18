@@ -30,9 +30,9 @@ const FIXTURES: Record<string, BleDeviceInfo> = {
   'Eufy Smart Scale P2/P2 Pro': { localName: 'eufy T9149', serviceUuids: [] },
   'Senssun Fat Scale': { localName: 'senssun fat', serviceUuids: [] },
   'QN Scale': { localName: 'QN-Scale', serviceUuids: ['fff0'] },
-  // Renpho ES-WBE28 is shadowed by QN (see KNOWN_SHADOWS): QN matches any
-  // name containing "renpho" and runs first in the registry.
-  'Renpho ES-WBE28': { localName: 'Renpho Body Scale', serviceUuids: [] },
+  // #191: a real ES-WBE28 advertises SIG WSS/BCS (0x181D/0x181B) and no QN
+  // vendor service, so QN now defers and it resolves to RenphoScaleAdapter.
+  'Renpho ES-WBE28': { localName: 'Renpho Body Scale', serviceUuids: ['181b', '181d'] },
   'Renpho ES-26BB': { localName: 'es-26bb-b', serviceUuids: [] },
   'Beurer BF720/BF105': { localName: 'BF720', serviceUuids: [] },
   'Xiaomi Mi Scale 2': { localName: 'MIBFS', serviceUuids: [] },
@@ -70,11 +70,12 @@ const FIXTURES: Record<string, BleDeviceInfo> = {
  * test should fail on. Maps shadowed adapter -> the adapter that legitimately
  * wins. Tracked separately on GitHub. The test still pins the *observed*
  * resolution, so if the shadowing relationship itself changes, it surfaces.
+ *
+ * Currently empty: the Renpho ES-WBE28 ↔ QN shadow (#191) was fixed by
+ * tightening QnScaleAdapter.matches(). The mechanism is kept for any future
+ * shadow that cannot be fixed immediately.
  */
-const KNOWN_SHADOWS: Record<string, string> = {
-  // QN's `name.includes('renpho')` matches before RenphoScaleAdapter (#4).
-  'Renpho ES-WBE28': 'QN Scale',
-};
+const KNOWN_SHADOWS: Record<string, string> = {};
 
 describe('registry collision guard (#182)', () => {
   it.each(adapters.map((a) => ({ name: a.name })))(

@@ -84,6 +84,8 @@ def _merge_entry(seen, entry):
         if entry.get("manufacturer_data") and not seen[mac].get("manufacturer_data"):
             seen[mac]["manufacturer_id"] = entry["manufacturer_id"]
             seen[mac]["manufacturer_data"] = entry["manufacturer_data"]
+        if entry.get("services") and not seen[mac].get("services"):
+            seen[mac]["services"] = entry["services"]
     else:
         seen[mac] = entry
 
@@ -147,7 +149,11 @@ class BleBridge:
                 entry = _parse_raw_entry(addr_bytes, addr_type, rssi, raw)
                 _merge_entry(seen, entry)
 
-            results = [v for v in seen.values() if v["name"] or v.get("manufacturer_data")]
+            results = [
+                v
+                for v in seen.values()
+                if v["name"] or v.get("manufacturer_data") or v.get("services")
+            ]
             seen.clear()
             raw_results.clear()
             return results
@@ -205,11 +211,19 @@ class BleBridge:
         self._seen_cycle += 1
         if self._seen_cycle >= board.SEEN_RESET_CYCLES:
             self._seen_cycle = 0
-            results = [v for v in self._seen.values() if v["name"] or v.get("manufacturer_data")]
+            results = [
+                v
+                for v in self._seen.values()
+                if v["name"] or v.get("manufacturer_data") or v.get("services")
+            ]
             self._seen = {}
             return results
 
-        return [v for v in self._seen.values() if v["name"] or v.get("manufacturer_data")]
+        return [
+            v
+            for v in self._seen.values()
+            if v["name"] or v.get("manufacturer_data") or v.get("services")
+        ]
 
     def stop_streaming(self):
         """Stop the indefinite BLE scan."""

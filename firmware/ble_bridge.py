@@ -103,6 +103,7 @@ class BleBridge:
         self._seen = {}
         self._seen_cycle = 0
         self._cap_logged = False
+        self._oom_logged = False
 
     def set_on_disconnect(self, callback):
         """Set callback for unexpected peripheral disconnect (fires at most once)."""
@@ -124,13 +125,22 @@ class BleBridge:
         raw_results = []  # collect raw IRQ data
 
         _cap_logged = False
+        _oom_logged = False
 
         def _irq(event, data):
-            nonlocal _cap_logged
+            nonlocal _cap_logged, _oom_logged
             if event == 5:  # _IRQ_SCAN_RESULT
                 if len(raw_results) < board.MAX_SCAN_ENTRIES:
                     _, addr, addr_type, rssi, adv_data = data
-                    raw_results.append((bytes(addr), addr_type, rssi, bytes(adv_data)))
+                    try:
+                        raw_results.append((bytes(addr), addr_type, rssi, bytes(adv_data)))
+                    except MemoryError:
+                        # Drop this advertisement instead of letting the OOM
+                        # propagate out of the IRQ. An unhandled IRQ exception
+                        # leaves NimBLE in a bad state and panics the device.
+                        if not _oom_logged:
+                            _oom_logged = True
+                            print("Scan IRQ low memory, dropping results (lower MAX_SCAN_ENTRIES)")
                 elif not _cap_logged:
                     _cap_logged = True
                     print(f"Scan entry cap reached ({board.MAX_SCAN_ENTRIES}), ignoring further results")
@@ -178,12 +188,21 @@ class BleBridge:
         self._seen = {}
         self._seen_cycle = 0
         self._cap_logged = False
+        self._oom_logged = False
 
         def _irq(event, data):
             if event == 5:  # _IRQ_SCAN_RESULT
                 if len(self._raw_results) < board.MAX_SCAN_ENTRIES:
                     _, addr, addr_type, rssi, adv_data = data
-                    self._raw_results.append((bytes(addr), addr_type, rssi, bytes(adv_data)))
+                    try:
+                        self._raw_results.append((bytes(addr), addr_type, rssi, bytes(adv_data)))
+                    except MemoryError:
+                        # Drop this advertisement instead of letting the OOM
+                        # propagate out of the IRQ. An unhandled IRQ exception
+                        # leaves NimBLE in a bad state and panics the device.
+                        if not self._oom_logged:
+                            self._oom_logged = True
+                            print("Streaming scan IRQ low memory, dropping results (lower MAX_SCAN_ENTRIES)")
                 elif not self._cap_logged:
                     self._cap_logged = True
                     print(f"Streaming scan cap reached ({board.MAX_SCAN_ENTRIES}), ignoring until drain")
@@ -203,6 +222,7 @@ class BleBridge:
         raw = self._raw_results
         self._raw_results = []
         self._cap_logged = False
+        self._oom_logged = False
 
         for addr_bytes, addr_type, rssi, adv_raw in raw:
             entry = _parse_raw_entry(addr_bytes, addr_type, rssi, adv_raw)

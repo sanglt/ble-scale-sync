@@ -1,27 +1,29 @@
 ---
 title: Exporters
-description: Configure Garmin Connect, Strava, MQTT, Webhook, InfluxDB, Ntfy, and File export targets.
+description: Configure Garmin Connect, Strava, Intervals.icu, MQTT, Webhook, InfluxDB, Ntfy, Telegram, and File export targets.
 head:
   - - meta
     - name: keywords
-      content: garmin connect scale sync, strava weight sync, mqtt home assistant scale, influxdb body weight, smart scale webhook, ntfy notifications, scale data export csv, garmin body composition upload
+      content: garmin connect scale sync, strava weight sync, intervals.icu wellness weight, mqtt home assistant scale, influxdb body weight, smart scale webhook, ntfy notifications, telegram scale notifications, scale data export csv, garmin body composition upload
 ---
 
 # Exporters
 
-BLE Scale Sync exports body composition data to 7 targets. The [setup wizard](/guide/configuration#setup-wizard-recommended) walks you through exporter selection, configuration, and connectivity testing.
+BLE Scale Sync exports body composition data to 9 targets. The [setup wizard](/guide/configuration#setup-wizard-recommended) walks you through exporter selection, configuration, and connectivity testing.
 
 Exporters are configured in `global_exporters` (shared by all users). For multi-user setups with separate accounts, see [Per-User Exporters](/multi-user#per-user-exporters). All enabled exporters run in parallel; the process reports an error only if **every** exporter fails.
 
-| Target                        | Description                                            |
-| ----------------------------- | ------------------------------------------------------ |
-| [**Garmin Connect**](#garmin) | Automatic body composition upload, no phone app needed |
-| [**MQTT**](#mqtt)             | Home Assistant auto-discovery with 10 sensors, LWT     |
-| [**InfluxDB**](#influxdb)     | Time-series database (v2 write API)                    |
-| [**Webhook**](#webhook)       | Any HTTP endpoint (n8n, Make, Zapier, custom APIs)     |
-| [**Ntfy**](#ntfy)             | Push notifications to phone/desktop                    |
-| [**File (CSV/JSONL)**](#file) | Append readings to a local file                        |
-| [**Strava**](#strava)         | Update weight in your Strava athlete profile           |
+| Target                          | Description                                            |
+| ------------------------------- | ------------------------------------------------------ |
+| [**Garmin Connect**](#garmin)   | Automatic body composition upload, no phone app needed |
+| [**MQTT**](#mqtt)               | Home Assistant auto-discovery with 10 sensors, LWT     |
+| [**InfluxDB**](#influxdb)       | Time-series database (v2 write API)                    |
+| [**Webhook**](#webhook)         | Any HTTP endpoint (n8n, Make, Zapier, custom APIs)     |
+| [**Ntfy**](#ntfy)               | Push notifications to phone/desktop                    |
+| [**Telegram**](#telegram)       | Send measurement notifications to a Telegram chat      |
+| [**File (CSV/JSONL)**](#file)   | Append readings to a local file                        |
+| [**Strava**](#strava)           | Update weight in your Strava athlete profile           |
+| [**Intervals.icu**](#intervals) | Push weight + body fat to Intervals.icu wellness       |
 
 ## Garmin Connect {#garmin}
 
@@ -180,6 +182,32 @@ global_exporters:
     priority: 4
 ```
 
+## Telegram {#telegram}
+
+Send a measurement notification to a Telegram chat via a bot. Create a bot with [@BotFather](https://t.me/BotFather) to get a bot token, then start a chat with your bot (or add it to a group/channel) so it can message you.
+
+| Field       | Required | Default             | Description                                    |
+| ----------- | -------- | ------------------- | ---------------------------------------------- |
+| `bot_token` | Yes      | (none)              | Bot token from @BotFather                      |
+| `chat_id`   | Yes      | (none)              | Target chat ID (numeric) or `@channelusername` |
+| `title`     | No       | `Scale Measurement` | First line of the message                      |
+| `silent`    | No       | `false`             | Deliver without a notification sound           |
+
+```yaml
+global_exporters:
+  - type: telegram
+    bot_token: '${TELEGRAM_BOT_TOKEN}'
+    chat_id: '987654321'
+    title: Scale Measurement
+    silent: false
+```
+
+The message is sent as plain text. In multi-user setups the user's name is prepended as `[Name]`. Historical readings replayed from a scale's offline cache are skipped (a notification for an old measurement is not meaningful).
+
+::: tip Finding your chat ID
+Message your bot once, then open `https://api.telegram.org/bot<token>/getUpdates` in a browser — the `chat.id` field holds your chat ID. For groups, add the bot to the group first.
+:::
+
 ## File (CSV/JSONL) {#file}
 
 Append each reading to a local CSV or JSONL file. Useful for simple logging without external services.
@@ -264,6 +292,26 @@ docker run --rm -it \
 The script prints a browser URL for Strava authorization. After authorizing, copy the `code` parameter from the redirect URL and paste it back. Tokens are cached and automatically refreshed.
 :::
 
+## Intervals.icu {#intervals}
+
+Push weight and body fat to your [Intervals.icu](https://intervals.icu) wellness data. Intervals.icu is a free training-analytics platform — a natural fit alongside the Garmin and Strava exporters.
+
+| Field        | Required | Default | Description                                     |
+| ------------ | -------- | ------- | ----------------------------------------------- |
+| `athlete_id` | Yes      | (none)  | Intervals.icu athlete ID (e.g. `i123456`)       |
+| `api_key`    | Yes      | (none)  | API key from Intervals.icu Settings → Developer |
+
+```yaml
+users:
+  - name: Alice
+    exporters:
+      - type: intervals
+        athlete_id: i123456
+        api_key: '${INTERVALS_API_KEY}'
+```
+
+Authentication uses HTTP Basic with the API key — no OAuth flow. Find both values on the Intervals.icu **Settings → Developer** page. The reading updates the wellness record for its day (`weight` + `bodyFat`); historical readings replayed from a scale's offline cache land on their original date.
+
 ## Secrets
 
 Use `${ENV_VAR}` references in YAML for passwords and tokens. The variable must be defined in the environment or in a `.env` file:
@@ -281,12 +329,14 @@ See [Configuration: Environment Variables](/guide/configuration#environment-vari
 
 At startup, exporters are tested for connectivity. Failures are logged as warnings but don't block the scan.
 
-| Exporter | Method                       |
-| -------- | ---------------------------- |
-| MQTT     | Connect + disconnect         |
-| Webhook  | HEAD request                 |
-| InfluxDB | `/health` endpoint           |
-| Ntfy     | `/v1/health` endpoint        |
-| Garmin   | None (Python subprocess)     |
-| File     | Directory writable check     |
-| Strava   | None (avoid API rate limits) |
+| Exporter      | Method                       |
+| ------------- | ---------------------------- |
+| MQTT          | Connect + disconnect         |
+| Webhook       | HEAD request                 |
+| InfluxDB      | `/health` endpoint           |
+| Ntfy          | `/v1/health` endpoint        |
+| Telegram      | `getChat` endpoint           |
+| Intervals.icu | `GET` wellness record        |
+| Garmin        | None (Python subprocess)     |
+| File          | Directory writable check     |
+| Strava        | None (avoid API rate limits) |

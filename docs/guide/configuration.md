@@ -137,7 +137,7 @@ global_exporters:
     password: '${GARMIN_PASSWORD}'
 ```
 
-Shared by all users unless a user defines their own `exporters` list. See [Exporters](/exporters) for all 7 targets and their configuration fields.
+Shared by all users unless a user defines their own `exporters` list. See [Exporters](/exporters) for all 9 targets and their configuration fields.
 
 ### Runtime
 

@@ -71,6 +71,9 @@ users:
     #     client_id: "${STRAVA_CLIENT_ID}"
     #     client_secret: "${STRAVA_CLIENT_SECRET}"
     #     token_dir: ./strava-tokens/alice   # run "npm run setup-strava" after config
+    #   - type: intervals
+    #     athlete_id: i123456                # Intervals.icu Settings → Developer
+    #     api_key: "${INTERVALS_API_KEY}"
 
   - name: Bob
     slug: bob
@@ -129,6 +132,13 @@ global_exporters:
   #   token: "${NTFY_TOKEN}"               # Bearer token auth
   #   # username: myuser                   # or Basic auth
   #   # password: "${NTFY_PASSWORD}"
+
+  # -- Telegram (bot notifications) --
+  # - type: telegram
+  #   bot_token: "${TELEGRAM_BOT_TOKEN}"   # token from @BotFather
+  #   chat_id: "987654321"                 # numeric ID or @channelusername
+  #   title: Scale Measurement
+  #   silent: false                        # true = no notification sound
 
   # -- File (CSV/JSONL) --
   # - type: file

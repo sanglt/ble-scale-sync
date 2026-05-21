@@ -12,6 +12,32 @@ export interface RetryOptions {
 }
 
 /**
+ * An error `withRetry` will not retry — the operation is guaranteed to fail
+ * again (e.g. bad credentials, malformed request). Fail fast instead.
+ */
+export class NonRetryableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'NonRetryableError';
+  }
+}
+
+/** True for HTTP statuses worth retrying: 5xx server errors, 408 timeout, 429 rate-limit. */
+export function isRetryableStatus(status: number): boolean {
+  return status >= 500 || status === 408 || status === 429;
+}
+
+/**
+ * Build an error for a failed HTTP response. 4xx client errors (except 408 and
+ * 429) are wrapped in {@link NonRetryableError} so `withRetry` fails fast
+ * rather than retrying a request that cannot succeed.
+ */
+export function httpError(status: number, prefix?: string): Error {
+  const message = prefix ? `${prefix}: HTTP ${status}` : `HTTP ${status}`;
+  return isRetryableStatus(status) ? new Error(message) : new NonRetryableError(message);
+}
+
+/**
  * Execute an async function with retries, returning an ExportResult.
  *
  * The `fn` should throw on failure. If it returns an ExportResult with
@@ -37,6 +63,9 @@ export async function withRetry(
     } catch (err) {
       lastError = errMsg(err);
       opts.log.error(`${opts.label} failed: ${lastError}`);
+      if (err instanceof NonRetryableError) {
+        return { success: false, error: lastError };
+      }
     }
   }
 

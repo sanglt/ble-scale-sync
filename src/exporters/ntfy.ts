@@ -3,7 +3,7 @@ import type { BodyComposition } from '../interfaces/scale-adapter.js';
 import type { Exporter, ExportContext, ExportResult } from '../interfaces/exporter.js';
 import type { ExporterSchema } from '../interfaces/exporter-schema.js';
 import type { NtfyConfig } from './config.js';
-import { withRetry } from '../utils/retry.js';
+import { withRetry, httpError } from '../utils/retry.js';
 import { errMsg } from '../utils/error.js';
 
 const log = createLogger('Ntfy');
@@ -115,7 +115,7 @@ export class NtfyExporter implements Exporter {
         });
 
         if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
+          throw httpError(response.status);
         }
 
         log.info('Ntfy notification sent.');

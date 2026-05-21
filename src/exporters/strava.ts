@@ -5,7 +5,7 @@ import type { BodyComposition } from '../interfaces/scale-adapter.js';
 import type { Exporter, ExportContext, ExportResult } from '../interfaces/exporter.js';
 import type { ExporterSchema } from '../interfaces/exporter-schema.js';
 import type { StravaConfig } from './config.js';
-import { withRetry } from '../utils/retry.js';
+import { withRetry, httpError } from '../utils/retry.js';
 const log = createLogger('Strava');
 
 interface StravaTokens {
@@ -71,7 +71,7 @@ export class StravaExporter implements Exporter {
         });
 
         if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
+          throw httpError(response.status);
         }
 
         log.info(`Strava weight updated to ${data.weight.toFixed(2)} kg.`);
@@ -118,7 +118,7 @@ export class StravaExporter implements Exporter {
     });
 
     if (!response.ok) {
-      throw new Error(`Token refresh failed: HTTP ${response.status}`);
+      throw httpError(response.status, 'Token refresh failed');
     }
 
     const data = (await response.json()) as {

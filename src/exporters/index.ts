@@ -7,6 +7,8 @@ import { InfluxDbExporter } from './influxdb.js';
 import { NtfyExporter } from './ntfy.js';
 import { FileExporter } from './file.js';
 import { StravaExporter } from './strava.js';
+import { TelegramExporter } from './telegram.js';
+import { IntervalsExporter } from './intervals.js';
 
 export { loadExporterConfig } from './config.js';
 export { createExporterFromEntry, EXPORTER_SCHEMAS, KNOWN_EXPORTER_NAMES } from './registry.js';
@@ -36,6 +38,12 @@ export function createExporters(config: ExporterConfig): Exporter[] {
         break;
       case 'strava':
         exporters.push(new StravaExporter(config.strava!));
+        break;
+      case 'telegram':
+        exporters.push(new TelegramExporter(config.telegram!));
+        break;
+      case 'intervals':
+        exporters.push(new IntervalsExporter(config.intervals!));
         break;
       default: {
         const _exhaustive: never = name;

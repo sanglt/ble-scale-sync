@@ -58,3 +58,6 @@ jobs:
 
       - name: Check Python syntax
         run: python -m py_compile garmin-scripts/garmin_upload.py && python -m py_compile garmin-scripts/setup_garmin.py
+
+      - name: Run firmware unit tests
+        run: python -m unittest discover -s firmware/tests -v

@@ -12,13 +12,15 @@ import { InfluxDbExporter } from '../../src/exporters/influxdb.js';
 import { NtfyExporter } from '../../src/exporters/ntfy.js';
 import { FileExporter } from '../../src/exporters/file.js';
 import { StravaExporter } from '../../src/exporters/strava.js';
+import { TelegramExporter } from '../../src/exporters/telegram.js';
+import { IntervalsExporter } from '../../src/exporters/intervals.js';
 import type { ExporterEntry } from '../../src/config/schema.js';
 
 // ─── EXPORTER_REGISTRY ─────────────────────────────────────────────────────
 
 describe('EXPORTER_REGISTRY', () => {
-  it('contains 7 exporter entries', () => {
-    expect(EXPORTER_REGISTRY).toHaveLength(7);
+  it('contains 9 exporter entries', () => {
+    expect(EXPORTER_REGISTRY).toHaveLength(9);
   });
 
   it('has entries for all known exporters', () => {
@@ -30,6 +32,8 @@ describe('EXPORTER_REGISTRY', () => {
     expect(names).toContain('ntfy');
     expect(names).toContain('file');
     expect(names).toContain('strava');
+    expect(names).toContain('telegram');
+    expect(names).toContain('intervals');
   });
 
   it('each entry has a schema and factory', () => {
@@ -47,8 +51,8 @@ describe('EXPORTER_REGISTRY', () => {
 // ─── EXPORTER_SCHEMAS ──────────────────────────────────────────────────────
 
 describe('EXPORTER_SCHEMAS', () => {
-  it('derives 7 schemas from registry', () => {
-    expect(EXPORTER_SCHEMAS).toHaveLength(7);
+  it('derives 9 schemas from registry', () => {
+    expect(EXPORTER_SCHEMAS).toHaveLength(9);
   });
 
   it('each schema has required fields', () => {
@@ -144,14 +148,46 @@ describe('EXPORTER_SCHEMAS', () => {
     expect(keys).toContain('client_id');
     expect(keys).toContain('client_secret');
   });
+
+  it('telegram schema supports global only', () => {
+    const telegram = EXPORTER_SCHEMAS.find((s) => s.name === 'telegram');
+    expect(telegram).toBeDefined();
+    expect(telegram!.supportsGlobal).toBe(true);
+    expect(telegram!.supportsPerUser).toBe(false);
+  });
+
+  it('telegram schema has bot_token and chat_id as required fields', () => {
+    const telegram = EXPORTER_SCHEMAS.find((s) => s.name === 'telegram');
+    const requiredFields = telegram!.fields.filter((f) => f.required);
+    expect(requiredFields).toHaveLength(2);
+    const keys = requiredFields.map((f) => f.key);
+    expect(keys).toContain('bot_token');
+    expect(keys).toContain('chat_id');
+  });
+
+  it('intervals schema supports per-user only', () => {
+    const intervals = EXPORTER_SCHEMAS.find((s) => s.name === 'intervals');
+    expect(intervals).toBeDefined();
+    expect(intervals!.supportsGlobal).toBe(false);
+    expect(intervals!.supportsPerUser).toBe(true);
+  });
+
+  it('intervals schema has athlete_id and api_key as required fields', () => {
+    const intervals = EXPORTER_SCHEMAS.find((s) => s.name === 'intervals');
+    const requiredFields = intervals!.fields.filter((f) => f.required);
+    expect(requiredFields).toHaveLength(2);
+    const keys = requiredFields.map((f) => f.key);
+    expect(keys).toContain('athlete_id');
+    expect(keys).toContain('api_key');
+  });
 });
 
 // ─── KNOWN_EXPORTER_NAMES ──────────────────────────────────────────────────
 
 describe('KNOWN_EXPORTER_NAMES', () => {
-  it('is a Set with 7 entries', () => {
+  it('is a Set with 9 entries', () => {
     expect(KNOWN_EXPORTER_NAMES).toBeInstanceOf(Set);
-    expect(KNOWN_EXPORTER_NAMES.size).toBe(7);
+    expect(KNOWN_EXPORTER_NAMES.size).toBe(9);
   });
 
   it('contains all exporter names', () => {
@@ -162,6 +198,8 @@ describe('KNOWN_EXPORTER_NAMES', () => {
     expect(KNOWN_EXPORTER_NAMES.has('ntfy')).toBe(true);
     expect(KNOWN_EXPORTER_NAMES.has('file')).toBe(true);
     expect(KNOWN_EXPORTER_NAMES.has('strava')).toBe(true);
+    expect(KNOWN_EXPORTER_NAMES.has('telegram')).toBe(true);
+    expect(KNOWN_EXPORTER_NAMES.has('intervals')).toBe(true);
   });
 });
 
@@ -241,6 +279,33 @@ describe('createExporterFromEntry()', () => {
     expect(() => createExporterFromEntry(entry)).toThrow('mqtt');
   });
 
+  it('throws a clear error when a required field is missing', () => {
+    const entry: ExporterEntry = { type: 'telegram', chat_id: '987654321' };
+    expect(() => createExporterFromEntry(entry)).toThrow(
+      'Exporter "telegram" is missing required field "bot_token"',
+    );
+  });
+
+  it('throws a clear error for an intervals entry missing api_key', () => {
+    const entry: ExporterEntry = { type: 'intervals', athlete_id: 'i123456' };
+    expect(() => createExporterFromEntry(entry)).toThrow(
+      'Exporter "intervals" is missing required field "api_key"',
+    );
+  });
+
+  it('rejects an empty-string required field', () => {
+    const entry: ExporterEntry = { type: 'webhook', url: '' };
+    expect(() => createExporterFromEntry(entry)).toThrow(
+      'Exporter "webhook" is missing required field "url"',
+    );
+  });
+
+  it('does not require runtime-optional garmin fields', () => {
+    // garmin email/password are wizard-required but optional at runtime
+    // (cached tokens), so a bare garmin entry must still construct.
+    expect(() => createExporterFromEntry({ type: 'garmin' })).not.toThrow();
+  });
+
   it('applies defaults for optional MQTT fields', () => {
     const entry: ExporterEntry = {
       type: 'mqtt',
@@ -300,5 +365,37 @@ describe('createExporterFromEntry()', () => {
     };
     const exporter = createExporterFromEntry(entry);
     expect(exporter).toBeInstanceOf(StravaExporter);
+  });
+
+  it('creates TelegramExporter from entry', () => {
+    const entry: ExporterEntry = {
+      type: 'telegram',
+      bot_token: '123456:ABC-DEF',
+      chat_id: '987654321',
+    };
+    const exporter = createExporterFromEntry(entry);
+    expect(exporter).toBeInstanceOf(TelegramExporter);
+    expect(exporter.name).toBe('telegram');
+  });
+
+  it('coerces a numeric telegram chat_id to a string', () => {
+    const entry: ExporterEntry = {
+      type: 'telegram',
+      bot_token: '123456:ABC-DEF',
+      chat_id: 987654321,
+    };
+    const exporter = createExporterFromEntry(entry);
+    expect(exporter).toBeInstanceOf(TelegramExporter);
+  });
+
+  it('creates IntervalsExporter from entry', () => {
+    const entry: ExporterEntry = {
+      type: 'intervals',
+      athlete_id: 'i123456',
+      api_key: 'abcdef123',
+    };
+    const exporter = createExporterFromEntry(entry);
+    expect(exporter).toBeInstanceOf(IntervalsExporter);
+    expect(exporter.name).toBe('intervals');
   });
 });

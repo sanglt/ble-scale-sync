@@ -49,7 +49,7 @@ Unit tests use [Vitest](https://vitest.dev/) and cover:
 - **Config writing** — atomic file write, write lock serialization, YAML comment preservation, debounced weight updates
 - **User matching** — 4-tier weight matching, all strategies (nearest/log/ignore), overlapping ranges, drift detection
 - **Environment validation** — `validate-env.ts` (all validation rules and edge cases)
-- **Scale adapters** — `parseNotification()`, `matches()`, `isComplete()`, `computeMetrics()`, and `onConnected()` for all 24 adapters
+- **Scale adapters** — `parseNotification()`, `matches()`, `isComplete()`, `computeMetrics()`, and `onConnected()` for all 25 adapters
 - **Exporters** — config parsing, MQTT publish/HA discovery, MQTT multi-user topic routing + per-user HA discovery, Garmin subprocess, Webhook/InfluxDB/Ntfy delivery, ExportContext, ntfy drift warning
 - **Multi-user flow** — matching → profile resolution → exporter resolution → ExportContext construction, strategy fallback, tiebreak with last_known_weight
 - **Orchestrator** — healthcheck runner, export dispatch, parallel execution, partial/total failure handling
@@ -128,6 +128,8 @@ ble-scale-sync/
 │   │   ├── webhook.ts               # Generic HTTP webhook
 │   │   ├── influxdb.ts              # InfluxDB v2 (line protocol)
 │   │   ├── ntfy.ts                  # Ntfy push notifications
+│   │   ├── telegram.ts              # Telegram bot notifications
+│   │   ├── intervals.ts             # Intervals.icu wellness records
 │   │   └── file.ts                  # Local file exporter (CSV / JSONL)
 │   ├── wizard/
 │   │   ├── index.ts                 # Entry for npm run setup
@@ -195,7 +197,7 @@ ble-scale-sync/
 │   ├── utils/                       # Retry, error
 │   ├── scales/                      # One file per adapter (23 files)
 │   └── exporters/                   # config, garmin, mqtt (+multi-user), webhook, influxdb,
-│                                    # ntfy, strava, file, context, healthcheck, registry, index
+│                                    # ntfy, telegram, intervals, strava, file, context, healthcheck, registry, index
 ├── ble-scale-sync-addon/            # Home Assistant Supervisor Add-on
 │   ├── Dockerfile                   # Thin layer on GHCR image + jq/curl/run.sh
 │   ├── build.yaml                   # Multi-arch build config

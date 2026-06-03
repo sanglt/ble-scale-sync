@@ -91,7 +91,7 @@ Requires Node.js v22+ and a BLE adapter. See the **[full install guide](https://
 - **[ESPHome Bluetooth proxy](https://blescalesync.dev/guide/esphome-proxy).** Reuse an existing ESPHome BT proxy mesh (Home Assistant) as a BLE radio via Native API: broadcast and GATT scales (public and random BLE addresses), multi-proxy with RSSI auto-pick.
 - **BLE adapter selection.** `ble.adapter: hci1` for multi-adapter setups (Linux).
 - **Broadcast mode.** Supports non-connectable scales that only advertise weight via BLE advertisements.
-- **Linux stability hardening.** Auto-recovery for the BlueZ "stuck discovery" state via a consecutive-failure watchdog, plus optional [systemd `Type=notify`](https://blescalesync.dev/troubleshooting#ble-discovery-stops-working-after-hours-bluez-stuck-state) integration for whole-loop freezes.
+- **Linux stability hardening.** Auto-recovery for the BlueZ "stuck discovery" state via a consecutive-failure watchdog, plus optional [systemd `Type=notify`](https://blescalesync.dev/troubleshooting#ble-discovery-stops-working-after-hours-bluez-stuck-state) integration for whole-loop freezes. The watchdog is idle-aware, so a scale that only advertises while in use does not trigger needless restarts when nobody is weighing.
 - **Update check.** Optional, anonymous version check after each measurement (opt-out via `update_check: false`); see the [auto update guide](https://blescalesync.dev/guide/auto-update) for Watchtower, systemd timer, and HA add-on recipes.
 - **Cross-platform.** Linux (Docker + native), macOS, Windows.
 - **Private.** Your data stays on your device, no vendor cloud.

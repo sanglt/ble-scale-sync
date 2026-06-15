@@ -287,17 +287,22 @@ async def _streaming_scan_loop():
                     if found:
                         mac, _addr_bytes, addr_type = found
                         print(f"Auto-connect: scale {mac} detected after {waited}ms, connecting immediately")
-                        # Drain and publish scan results first so the host
-                        # sees what triggered the connect.
+                        # A stepped-on GATT-only scale stays connectable only
+                        # briefly, so reach gap_connect with minimal delay (#231).
+                        # Snapshot scan results synchronously before stop_streaming
+                        # clears the raw buffer, but defer the awaited MQTT publish
+                        # (a WiFi round-trip) until AFTER the connect attempt.
                         try:
                             results = bridge.drain_results()
-                            gc.collect()
                             _check_scale_beep(results)
                             board.on_scan_complete(results, bool(_scale_macs))
+                        except Exception:
+                            results = []
+                        await _auto_gatt_connect(mac, addr_type)
+                        try:
                             await client.publish(topic("scan/results"), json.dumps(results), qos=0)
                         except Exception:
                             pass
-                        await _auto_gatt_connect(mac, addr_type)
                         break
                 # If auto-connect is disabled, just break to flush results
                 # as before (host-initiated connect path).

@@ -407,7 +407,12 @@ class BleBridge:
         import gc
 
         gc.collect()
-        gc.collect()
+        # The second pass can release a split the first only emptied, which
+        # matters on a tight no-PSRAM board (#139). On PSRAM boards it only adds
+        # latency before connect, and a stepped-on scale stays connectable
+        # briefly (#231), so gate it on the aggressive-GC board flag.
+        if getattr(board, "AGGRESSIVE_GC", True):
+            gc.collect()
         _log_idf_heap("before connect")
 
         # aioble forwards scan_duration_ms to gap_connect (default 2 s). Scales

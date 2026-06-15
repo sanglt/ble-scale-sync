@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.16.1](https://github.com/KristianP26/ble-scale-sync/compare/v1.16.0...v1.16.1) (2026-06-15)
+
+
+### Fixed
+
+* **ble:** decode Sanitas SBF70/BF710 body composition via 0x59 ACK stream ([#211](https://github.com/KristianP26/ble-scale-sync/issues/211)) ([c3beb00](https://github.com/KristianP26/ble-scale-sync/commit/c3beb007372ff0a051a82d1ba411b6ef14d9e7ab))
+* **ble:** parse QN 0x23 stored record for V10 Renpho/ES-CS20M ([#213](https://github.com/KristianP26/ble-scale-sync/issues/213)) ([5617f28](https://github.com/KristianP26/ble-scale-sync/commit/5617f28fb7d02f47a34c86a2aa7b29fbdbe33688))
+* **ble:** read ESPHome proxy pre-decoded GATT uuid ([#229](https://github.com/KristianP26/ble-scale-sync/issues/229)) ([#234](https://github.com/KristianP26/ble-scale-sync/issues/234)) ([c1079c7](https://github.com/KristianP26/ble-scale-sync/commit/c1079c72375856b8179234bebd5d5e1ef82a7f60))
+
 ## [1.16.0](https://github.com/KristianP26/ble-scale-sync/compare/v1.15.0...v1.16.0) (2026-06-04)
 
 

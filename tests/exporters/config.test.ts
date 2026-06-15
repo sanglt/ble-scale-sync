@@ -447,4 +447,25 @@ describe('loadExporterConfig()', () => {
       expect(cfg.intervals).toBeUndefined();
     });
   });
+
+  describe('Runalyze config', () => {
+    it('requires RUNALYZE_TOKEN when runalyze is enabled', () => {
+      vi.stubEnv('EXPORTERS', 'runalyze');
+      expect(() => loadExporterConfig()).toThrow(/RUNALYZE_TOKEN is required/);
+    });
+
+    it('parses runalyze env vars', () => {
+      vi.stubEnv('EXPORTERS', 'runalyze');
+      vi.stubEnv('RUNALYZE_TOKEN', 'tok-abc123');
+      const cfg = loadExporterConfig();
+      expect(cfg.runalyze).toEqual({ token: 'tok-abc123' });
+    });
+
+    it('does not parse runalyze config when runalyze is not enabled', () => {
+      vi.stubEnv('EXPORTERS', 'garmin');
+      vi.stubEnv('RUNALYZE_TOKEN', 'tok-abc123');
+      const cfg = loadExporterConfig();
+      expect(cfg.runalyze).toBeUndefined();
+    });
+  });
 });

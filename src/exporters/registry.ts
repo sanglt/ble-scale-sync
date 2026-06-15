@@ -10,6 +10,7 @@ import type {
   StravaConfig,
   TelegramConfig,
   IntervalsConfig,
+  RunalyzeConfig,
 } from './config.js';
 import { garminSchema, GarminExporter } from './garmin.js';
 import { mqttSchema, MqttExporter } from './mqtt.js';
@@ -20,6 +21,7 @@ import { fileSchema, FileExporter } from './file.js';
 import { stravaSchema, StravaExporter } from './strava.js';
 import { telegramSchema, TelegramExporter } from './telegram.js';
 import { intervalsSchema, IntervalsExporter } from './intervals.js';
+import { runalyzeSchema, RunalyzeExporter } from './runalyze.js';
 
 // --- Registry entry type ---
 
@@ -153,6 +155,15 @@ export const EXPORTER_REGISTRY: ExporterRegistryEntry[] = [
         apiKey: requireField(config, 'intervals', 'api_key'),
       };
       return new IntervalsExporter(intervalsConfig);
+    },
+  },
+  {
+    schema: runalyzeSchema,
+    factory: (config) => {
+      const runalyzeConfig: RunalyzeConfig = {
+        token: requireField(config, 'runalyze', 'token'),
+      };
+      return new RunalyzeExporter(runalyzeConfig);
     },
   },
 ];

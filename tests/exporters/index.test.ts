@@ -7,6 +7,7 @@ import { InfluxDbExporter } from '../../src/exporters/influxdb.js';
 import { NtfyExporter } from '../../src/exporters/ntfy.js';
 import { TelegramExporter } from '../../src/exporters/telegram.js';
 import { IntervalsExporter } from '../../src/exporters/intervals.js';
+import { RunalyzeExporter } from '../../src/exporters/runalyze.js';
 import type { ExporterConfig } from '../../src/exporters/config.js';
 
 describe('createExporters()', () => {
@@ -133,6 +134,17 @@ describe('createExporters()', () => {
     expect(exporters).toHaveLength(1);
     expect(exporters[0]).toBeInstanceOf(IntervalsExporter);
     expect(exporters[0].name).toBe('intervals');
+  });
+
+  it('creates RunalyzeExporter for runalyze', () => {
+    const config: ExporterConfig = {
+      exporters: ['runalyze'],
+      runalyze: { token: 'tok-abc123' },
+    };
+    const exporters = createExporters(config);
+    expect(exporters).toHaveLength(1);
+    expect(exporters[0]).toBeInstanceOf(RunalyzeExporter);
+    expect(exporters[0].name).toBe('runalyze');
   });
 
   it('returns empty array for empty exporters list', () => {

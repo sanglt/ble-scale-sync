@@ -80,6 +80,11 @@ export function loadEnvConfig(): AppConfig {
         api_key: i.apiKey,
       });
     }
+    if (name === 'runalyze' && exporterConfig.runalyze) {
+      Object.assign(entry, {
+        token: exporterConfig.runalyze.token,
+      });
+    }
 
     return entry as ExporterEntry;
   });

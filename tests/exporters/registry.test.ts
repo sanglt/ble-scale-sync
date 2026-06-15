@@ -19,8 +19,8 @@ import type { ExporterEntry } from '../../src/config/schema.js';
 // ─── EXPORTER_REGISTRY ─────────────────────────────────────────────────────
 
 describe('EXPORTER_REGISTRY', () => {
-  it('contains 9 exporter entries', () => {
-    expect(EXPORTER_REGISTRY).toHaveLength(9);
+  it('contains 10 exporter entries', () => {
+    expect(EXPORTER_REGISTRY).toHaveLength(10);
   });
 
   it('has entries for all known exporters', () => {
@@ -34,6 +34,7 @@ describe('EXPORTER_REGISTRY', () => {
     expect(names).toContain('strava');
     expect(names).toContain('telegram');
     expect(names).toContain('intervals');
+    expect(names).toContain('runalyze');
   });
 
   it('each entry has a schema and factory', () => {
@@ -51,8 +52,8 @@ describe('EXPORTER_REGISTRY', () => {
 // ─── EXPORTER_SCHEMAS ──────────────────────────────────────────────────────
 
 describe('EXPORTER_SCHEMAS', () => {
-  it('derives 9 schemas from registry', () => {
-    expect(EXPORTER_SCHEMAS).toHaveLength(9);
+  it('derives 10 schemas from registry', () => {
+    expect(EXPORTER_SCHEMAS).toHaveLength(10);
   });
 
   it('each schema has required fields', () => {
@@ -180,14 +181,28 @@ describe('EXPORTER_SCHEMAS', () => {
     expect(keys).toContain('athlete_id');
     expect(keys).toContain('api_key');
   });
+
+  it('runalyze schema supports per-user only', () => {
+    const runalyze = EXPORTER_SCHEMAS.find((s) => s.name === 'runalyze');
+    expect(runalyze).toBeDefined();
+    expect(runalyze!.supportsGlobal).toBe(false);
+    expect(runalyze!.supportsPerUser).toBe(true);
+  });
+
+  it('runalyze schema has token as the only required field', () => {
+    const runalyze = EXPORTER_SCHEMAS.find((s) => s.name === 'runalyze');
+    const requiredFields = runalyze!.fields.filter((f) => f.required);
+    expect(requiredFields).toHaveLength(1);
+    expect(requiredFields.map((f) => f.key)).toContain('token');
+  });
 });
 
 // ─── KNOWN_EXPORTER_NAMES ──────────────────────────────────────────────────
 
 describe('KNOWN_EXPORTER_NAMES', () => {
-  it('is a Set with 9 entries', () => {
+  it('is a Set with 10 entries', () => {
     expect(KNOWN_EXPORTER_NAMES).toBeInstanceOf(Set);
-    expect(KNOWN_EXPORTER_NAMES.size).toBe(9);
+    expect(KNOWN_EXPORTER_NAMES.size).toBe(10);
   });
 
   it('contains all exporter names', () => {
@@ -200,6 +215,7 @@ describe('KNOWN_EXPORTER_NAMES', () => {
     expect(KNOWN_EXPORTER_NAMES.has('strava')).toBe(true);
     expect(KNOWN_EXPORTER_NAMES.has('telegram')).toBe(true);
     expect(KNOWN_EXPORTER_NAMES.has('intervals')).toBe(true);
+    expect(KNOWN_EXPORTER_NAMES.has('runalyze')).toBe(true);
   });
 });
 

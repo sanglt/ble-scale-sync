@@ -1,15 +1,15 @@
 ---
 title: Exporters
-description: Configure Garmin Connect, Strava, Intervals.icu, MQTT, Webhook, InfluxDB, Ntfy, Telegram, and File export targets.
+description: Configure Garmin Connect, Strava, Intervals.icu, Runalyze, MQTT, Webhook, InfluxDB, Ntfy, Telegram, and File export targets.
 head:
   - - meta
     - name: keywords
-      content: garmin connect scale sync, strava weight sync, intervals.icu wellness weight, mqtt home assistant scale, influxdb body weight, smart scale webhook, ntfy notifications, telegram scale notifications, scale data export csv, garmin body composition upload
+      content: garmin connect scale sync, strava weight sync, intervals.icu wellness weight, runalyze body composition, mqtt home assistant scale, influxdb body weight, smart scale webhook, ntfy notifications, telegram scale notifications, scale data export csv, garmin body composition upload
 ---
 
 # Exporters
 
-BLE Scale Sync exports body composition data to 9 targets. The [setup wizard](/guide/configuration#setup-wizard-recommended) walks you through exporter selection, configuration, and connectivity testing.
+BLE Scale Sync exports body composition data to 10 targets. The [setup wizard](/guide/configuration#setup-wizard-recommended) walks you through exporter selection, configuration, and connectivity testing.
 
 Exporters are configured in `global_exporters` (shared by all users). For multi-user setups with separate accounts, see [Per-User Exporters](/multi-user#per-user-exporters). All enabled exporters run in parallel; the process reports an error only if **every** exporter fails.
 
@@ -24,6 +24,7 @@ Exporters are configured in `global_exporters` (shared by all users). For multi-
 | [**File (CSV/JSONL)**](#file)   | Append readings to a local file                        |
 | [**Strava**](#strava)           | Update weight in your Strava athlete profile           |
 | [**Intervals.icu**](#intervals) | Push weight + body fat to Intervals.icu wellness       |
+| [**Runalyze**](#runalyze)       | Push weight + body composition to Runalyze metrics     |
 
 ## Garmin Connect {#garmin}
 
@@ -312,6 +313,26 @@ users:
 
 Authentication uses HTTP Basic with the API key — no OAuth flow. Find both values on the Intervals.icu **Settings → Developer** page. The reading updates the wellness record for its day (`weight` + `bodyFat`); historical readings replayed from a scale's offline cache land on their original date.
 
+## Runalyze {#runalyze}
+
+Push weight and body composition to [Runalyze](https://runalyze.com), an endurance-training analytics platform, as health metrics.
+
+| Field   | Required | Default | Description                                                  |
+| ------- | -------- | ------- | ------------------------------------------------------------ |
+| `token` | Yes      | (none)  | Personal API token from Runalyze **Settings → Personal API** |
+
+```yaml
+users:
+  - name: Alice
+    exporters:
+      - type: runalyze
+        token: '${RUNALYZE_TOKEN}'
+```
+
+Authentication uses the Runalyze Personal API token (sent in the `token` header), no OAuth flow. Generate it at [runalyze.com/settings/personal-api](https://runalyze.com/settings/personal-api); note that Runalyze tokens require an expiry date, so the token has to be regenerated when it lapses.
+
+The reading is sent to the `bodyComposition` metric with an exact timestamp, so historical readings replayed from a scale's offline cache land on their original date and time. Weight, body fat and body water map directly; muscle and bone are converted from mass to a percentage of body weight (Runalyze stores those as percentages). Metrics that an adapter could not measure are omitted.
+
 ## Secrets
 
 Use `${ENV_VAR}` references in YAML for passwords and tokens. The variable must be defined in the environment or in a `.env` file:
@@ -337,6 +358,7 @@ At startup, exporters are tested for connectivity. Failures are logged as warnin
 | Ntfy          | `/v1/health` endpoint        |
 | Telegram      | `getChat` endpoint           |
 | Intervals.icu | `GET` wellness record        |
+| Runalyze      | `GET` bodyComposition metric |
 | Garmin        | None (Python subprocess)     |
 | File          | Directory writable check     |
 | Strava        | None (avoid API rate limits) |

@@ -11,7 +11,8 @@ export type ExporterName =
   | 'file'
   | 'strava'
   | 'telegram'
-  | 'intervals';
+  | 'intervals'
+  | 'runalyze';
 
 const KNOWN_EXPORTERS = new Set<ExporterName>([
   'garmin',
@@ -23,6 +24,7 @@ const KNOWN_EXPORTERS = new Set<ExporterName>([
   'strava',
   'telegram',
   'intervals',
+  'runalyze',
 ]);
 
 export interface MqttConfig {
@@ -85,6 +87,10 @@ export interface IntervalsConfig {
   apiKey: string;
 }
 
+export interface RunalyzeConfig {
+  token: string;
+}
+
 export interface ExporterConfig {
   exporters: ExporterName[];
   mqtt?: MqttConfig;
@@ -95,6 +101,7 @@ export interface ExporterConfig {
   strava?: StravaConfig;
   telegram?: TelegramConfig;
   intervals?: IntervalsConfig;
+  runalyze?: RunalyzeConfig;
 }
 
 function fail(msg: string): never {
@@ -301,5 +308,25 @@ export function loadExporterConfig(): ExporterConfig {
     intervals = { athleteId, apiKey };
   }
 
-  return { exporters, mqtt, webhook, influxdb, ntfy, file, strava, telegram, intervals };
+  let runalyze: RunalyzeConfig | undefined;
+  if (exporters.includes('runalyze')) {
+    const token = process.env.RUNALYZE_TOKEN?.trim();
+    if (!token) {
+      fail('RUNALYZE_TOKEN is required when runalyze exporter is enabled.');
+    }
+    runalyze = { token };
+  }
+
+  return {
+    exporters,
+    mqtt,
+    webhook,
+    influxdb,
+    ntfy,
+    file,
+    strava,
+    telegram,
+    intervals,
+    runalyze,
+  };
 }

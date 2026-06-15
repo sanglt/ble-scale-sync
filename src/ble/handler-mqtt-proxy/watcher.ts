@@ -5,14 +5,20 @@ import { waitForRawReading, hasParseableBroadcastSource } from '../shared.js';
 import { bleLog, withTimeout, errMsg, IMPEDANCE_GRACE_MS } from '../types.js';
 import { AsyncQueue } from '../async-queue.js';
 import { topics } from './topics.js';
-import { type MqttClient, getOrCreatePersistentClient } from './client.js';
+import {
+  type MqttClient,
+  getOrCreatePersistentClient,
+  addDiscoveredMac,
+  getDiscoveredMacs,
+  getDisplayUsers,
+} from './client.js';
 import {
   mqttGattConnect,
   mqttGattDisconnect,
   buildCharMapFromPayload,
   type MqttBleDevice,
 } from './gatt.js';
-import { registerScaleMac } from './display.js';
+import { registerScaleMac, publishConfig } from './display.js';
 import { type ScanResultEntry, toBleDeviceInfo } from './scan.js';
 
 const DEDUP_WINDOW_MS = 30_000;
@@ -69,6 +75,8 @@ export class ReadingWatcher {
   private _lifecycleHandlers: LifecycleHandler[] = [];
   private _messageHandler: ((topic: string, payload: Buffer) => void) | null = null;
   private _subscribedTopics: string[] = [];
+  /** Per-MAC count of consecutive scan deferrals with no autonomous connect (#231). */
+  private deferCounts = new Map<string, number>();
 
   constructor(
     config: MqttProxyConfig,
@@ -121,6 +129,19 @@ export class ReadingWatcher {
       await client.subscribeAsync(t.disconnected);
       this._subscribedTopics = [t.scanResults, t.status, t.connected, t.disconnected];
       bleLog.info('ReadingWatcher started, listening for scan results');
+
+      // Seed the ESP32 known-scale set with the statically configured target MAC
+      // so autonomous GATT connect can bootstrap a GATT-only scale that never
+      // emits a broadcast reading (#231). Without this, the ESP32 _scale_macs
+      // gate stays empty and the autonomous-connect path never fires, which
+      // deadlocks the watcher (it defers forever, waiting for a connect that
+      // can never come).
+      if (this.targetMac) {
+        addDiscoveredMac(this.targetMac);
+        await publishConfig(this.config, getDiscoveredMacs(), getDisplayUsers()).catch((err) =>
+          bleLog.warn(`Failed to seed ESP32 scale config for ${this.targetMac}: ${errMsg(err)}`),
+        );
+      }
     } catch (err) {
       this.started = false;
       throw err;
@@ -140,6 +161,10 @@ export class ReadingWatcher {
         try {
           const data = JSON.parse(payload.toString());
           if (data.autonomous && data.address) {
+            // The ESP32 fired its autonomous connect, so stop counting
+            // deferrals for this MAC. This keeps the host fallback from racing
+            // a working autonomous path (#231).
+            this.deferCounts.delete(data.address);
             bleLog.info(
               `Received autonomous connect from ESP32 for ${data.address} (${data.chars?.length ?? 0} chars)`,
             );
@@ -241,15 +266,30 @@ export class ReadingWatcher {
 
           // When auto_connect is enabled (default), the ESP32 connects
           // autonomously and publishes a `connected` payload handled by
-          // handleAutonomousConnect(). Skip the host-initiated GATT path
-          // to avoid a race where both sides try to connect simultaneously,
-          // causing timeouts (#201).
+          // handleAutonomousConnect(). Defer the host-initiated GATT path so
+          // both sides do not try to connect simultaneously and time out
+          // (#201), but fall back to it after a few deferrals so a never-firing
+          // autonomous path cannot deadlock the scale (#231).
           if (this.config.auto_connect !== false) {
-            bleLog.debug(
-              `Skipping host-initiated GATT for ${entry.address} — auto_connect enabled, ` +
-                `waiting for autonomous connect from ESP32`,
+            // The ESP32 connects autonomously when it sees a known scale MAC.
+            // But if it never fires (its known-scale set was never seeded, or
+            // the autonomous connect keeps failing), deferring forever
+            // deadlocks a GATT-only scale (#231). After a few deferrals with no
+            // autonomous `connected` event, fall back to host-initiated GATT.
+            const deferred = (this.deferCounts.get(entry.address) ?? 0) + 1;
+            this.deferCounts.set(entry.address, deferred);
+            if (deferred < ReadingWatcher.AUTO_CONNECT_FALLBACK_DEFERS) {
+              bleLog.debug(
+                `Skipping host-initiated GATT for ${entry.address}: auto_connect enabled, ` +
+                  `waiting for autonomous connect (defer ${deferred}/${ReadingWatcher.AUTO_CONNECT_FALLBACK_DEFERS})`,
+              );
+              continue;
+            }
+            bleLog.warn(
+              `No autonomous connect from ESP32 for ${entry.address} after ${deferred} scans; ` +
+                `falling back to host-initiated GATT (#231)`,
             );
-            continue;
+            // fall through to the host-initiated GATT path below
           }
 
           this.handleGattReading(entry, adapter).catch((err) => {
@@ -324,6 +364,14 @@ export class ReadingWatcher {
 
   private static readonly GATT_STALE_MS = 90_000;
 
+  /**
+   * Number of consecutive auto_connect deferrals for one MAC before the watcher
+   * falls back to a host-initiated GATT connect (#231). Generous enough that a
+   * seeded ESP32 (config seed on start) autonomously connects first; only a
+   * never-firing autonomous path (auto-discovery / no scale_mac) reaches it.
+   */
+  private static readonly AUTO_CONNECT_FALLBACK_DEFERS = 3;
+
   private async handleGattReading(entry: ScanResultEntry, adapter: ScaleAdapter): Promise<void> {
     if (this.gattInProgress) {
       if (Date.now() - this.gattStartedAt > ReadingWatcher.GATT_STALE_MS) {
@@ -375,6 +423,7 @@ export class ReadingWatcher {
       );
       registerScaleMac(this.config, entry.address).catch(() => {});
       this.queue.push(raw);
+      this.deferCounts.delete(entry.address);
     } finally {
       this.gattInProgress = false;
       device?.cleanup();

@@ -1258,6 +1258,36 @@ describe('handler-mqtt-proxy', () => {
       const raw = await watcher.nextReading();
       expect(raw.reading.weight).toBe(75.5);
     });
+
+    it('seeds ESP32 known-scale set with the configured scale_mac on start (#231)', async () => {
+      const adapter = createGattAdapter();
+      const watcher = new ReadingWatcher(
+        MQTT_PROXY_CONFIG,
+        [adapter],
+        'ff:03:00:53:d6:4d',
+        PROFILE,
+      );
+      await watcher.start();
+
+      const configCalls = (mockClient.publishAsync as ReturnType<typeof vi.fn>).mock.calls.filter(
+        (c: unknown[]) => c[0] === `${PREFIX}/config`,
+      );
+      expect(configCalls).toHaveLength(1);
+      const payload = JSON.parse(configCalls[0][1] as string);
+      // MAC is uppercased to match the ESP32 raw-buffer comparison format.
+      expect(payload.scales).toContain('FF:03:00:53:D6:4D');
+    });
+
+    it('does not seed config when no scale_mac is configured', async () => {
+      const adapter = createGattAdapter();
+      const watcher = new ReadingWatcher(MQTT_PROXY_CONFIG, [adapter]);
+      await watcher.start();
+
+      const configCalls = (mockClient.publishAsync as ReturnType<typeof vi.fn>).mock.calls.filter(
+        (c: unknown[]) => c[0] === `${PREFIX}/config`,
+      );
+      expect(configCalls).toHaveLength(0);
+    });
   });
 
   describe('GATT proxy', () => {
@@ -1954,6 +1984,110 @@ describe('handler-mqtt-proxy', () => {
         mockClient.publishAsync as ReturnType<typeof vi.fn>
       ).mock.calls.filter((c: unknown[]) => c[0] === `${PREFIX}/disconnect`);
       expect(disconnectCalls).toHaveLength(0);
+    });
+
+    it('falls back to host-initiated GATT after repeated deferrals with no autonomous connect (#231)', async () => {
+      // auto_connect default true, NO scale_mac → no seeding: reproduces the
+      // auto-discovery deadlock where the ESP32 never autonomously connects.
+      const adapter = createGattAdapter();
+      const watcher = new ReadingWatcher(MQTT_PROXY_CONFIG, [adapter], undefined, PROFILE);
+      await watcher.start();
+
+      const origPublish = mockClient.publishAsync;
+      let connectReceived = false;
+      mockClient.publishAsync = vi.fn(async (topic: string, payload?: string | Buffer) => {
+        if (topic === `${PREFIX}/connect`) {
+          connectReceived = true;
+          queueMicrotask(() =>
+            mockClient._simulateMessage(
+              `${PREFIX}/connected`,
+              JSON.stringify({
+                chars: [
+                  { uuid: GATT_NOTIFY_UUID, properties: ['notify'] },
+                  { uuid: GATT_WRITE_UUID, properties: ['write'] },
+                ],
+              }),
+            ),
+          );
+        }
+        if (topic === `${PREFIX}/write/${GATT_WRITE_UUID}`) {
+          queueMicrotask(() => {
+            const buf = Buffer.alloc(4);
+            buf.writeUInt16LE(7700, 0); // 77.00 kg
+            buf.writeUInt16LE(510, 2); // impedance 510
+            mockClient._simulateMessage(`${PREFIX}/notify/${GATT_NOTIFY_UUID}`, buf);
+          });
+        }
+        return origPublish(topic, payload);
+      });
+
+      const scanMsg = JSON.stringify([
+        { address: 'AA:BB:CC:DD:EE:FF', name: 'GattScale', rssi: -50, services: [] },
+      ]);
+
+      // Deferral 1 and 2 stay below the fallback threshold.
+      mockClient._simulateMessage(`${PREFIX}/scan/results`, scanMsg);
+      expect(connectReceived).toBe(false);
+      mockClient._simulateMessage(`${PREFIX}/scan/results`, scanMsg);
+      expect(connectReceived).toBe(false);
+      // Deferral 3 reaches the threshold → host-initiated GATT fires.
+      mockClient._simulateMessage(`${PREFIX}/scan/results`, scanMsg);
+
+      const raw = await watcher.nextReading();
+      expect(raw.reading.weight).toBe(77.0);
+      expect(connectReceived).toBe(true);
+    });
+
+    it('autonomous connect resets the deferral counter (no premature host fallback) (#231)', async () => {
+      const adapter = createGattAdapter();
+      const watcher = new ReadingWatcher(MQTT_PROXY_CONFIG, [adapter], undefined, PROFILE);
+      await watcher.start();
+
+      const origPublish = mockClient.publishAsync;
+      let hostConnects = 0;
+      mockClient.publishAsync = vi.fn(async (topic: string, payload?: string | Buffer) => {
+        if (topic === `${PREFIX}/connect`) hostConnects++;
+        if (topic === `${PREFIX}/write/${GATT_WRITE_UUID}`) {
+          queueMicrotask(() => {
+            const buf = Buffer.alloc(4);
+            buf.writeUInt16LE(8800, 0); // 88.00 kg
+            buf.writeUInt16LE(530, 2); // impedance 530
+            mockClient._simulateMessage(`${PREFIX}/notify/${GATT_NOTIFY_UUID}`, buf);
+          });
+        }
+        return origPublish(topic, payload);
+      });
+
+      const scanMsg = JSON.stringify([
+        { address: 'AA:BB:CC:DD:EE:FF', name: 'GattScale', rssi: -50, services: [] },
+      ]);
+
+      // Two deferrals (below threshold).
+      mockClient._simulateMessage(`${PREFIX}/scan/results`, scanMsg);
+      mockClient._simulateMessage(`${PREFIX}/scan/results`, scanMsg);
+
+      // Autonomous connect arrives → reading AND counter reset.
+      mockClient._simulateMessage(
+        `${PREFIX}/connected`,
+        JSON.stringify({
+          autonomous: true,
+          address: 'AA:BB:CC:DD:EE:FF',
+          chars: [
+            { uuid: GATT_NOTIFY_UUID, properties: ['notify'] },
+            { uuid: GATT_WRITE_UUID, properties: ['write'] },
+          ],
+        }),
+      );
+      const raw = await watcher.nextReading();
+      expect(raw.reading.weight).toBe(88.0);
+
+      // Two more deferrals — counter was reset, so still below threshold.
+      mockClient._simulateMessage(`${PREFIX}/scan/results`, scanMsg);
+      mockClient._simulateMessage(`${PREFIX}/scan/results`, scanMsg);
+      await new Promise((r) => setTimeout(r, 50));
+
+      // Never fell back to a host-initiated GATT connect.
+      expect(hostConnects).toBe(0);
     });
   });
 });

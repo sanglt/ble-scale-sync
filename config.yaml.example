@@ -145,6 +145,12 @@ global_exporters:
   #   file_path: "./measurements.csv"      # path to output file
   #   format: csv                          # "csv" or "jsonl"
 
+  # -- Wger (self-hosted weight/workout manager) --
+  # - type: wger
+  #   base_url: https://wger.de            # your instance URL
+  #   token: "${WGER_TOKEN}"               # API key from <base_url>/en/user/api-key
+  #   sync_measurements: true              # also push body fat/water/muscle/bone
+
 # --- Runtime Settings ---
 
 runtime:

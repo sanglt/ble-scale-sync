@@ -468,4 +468,44 @@ describe('loadExporterConfig()', () => {
       expect(cfg.runalyze).toBeUndefined();
     });
   });
+
+  describe('Wger config', () => {
+    it('requires WGER_BASE_URL when wger is enabled', () => {
+      vi.stubEnv('EXPORTERS', 'wger');
+      vi.stubEnv('WGER_TOKEN', 'tok-1');
+      expect(() => loadExporterConfig()).toThrow(/WGER_BASE_URL is required/);
+    });
+
+    it('requires WGER_TOKEN when wger is enabled', () => {
+      vi.stubEnv('EXPORTERS', 'wger');
+      vi.stubEnv('WGER_BASE_URL', 'https://wger.example');
+      expect(() => loadExporterConfig()).toThrow(/WGER_TOKEN is required/);
+    });
+
+    it('parses wger env vars (sync_measurements defaults true)', () => {
+      vi.stubEnv('EXPORTERS', 'wger');
+      vi.stubEnv('WGER_BASE_URL', 'https://wger.example');
+      vi.stubEnv('WGER_TOKEN', 'tok-1');
+      const cfg = loadExporterConfig();
+      expect(cfg.wger).toEqual({
+        baseUrl: 'https://wger.example',
+        token: 'tok-1',
+        syncMeasurements: true,
+      });
+    });
+
+    it('parses WGER_SYNC_MEASUREMENTS=false', () => {
+      vi.stubEnv('EXPORTERS', 'wger');
+      vi.stubEnv('WGER_BASE_URL', 'https://wger.example');
+      vi.stubEnv('WGER_TOKEN', 'tok-1');
+      vi.stubEnv('WGER_SYNC_MEASUREMENTS', 'false');
+      expect(loadExporterConfig().wger?.syncMeasurements).toBe(false);
+    });
+
+    it('does not parse wger config when wger is not enabled', () => {
+      vi.stubEnv('EXPORTERS', 'garmin');
+      vi.stubEnv('WGER_TOKEN', 'tok-1');
+      expect(loadExporterConfig().wger).toBeUndefined();
+    });
+  });
 });

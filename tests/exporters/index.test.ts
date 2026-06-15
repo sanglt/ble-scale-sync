@@ -8,6 +8,7 @@ import { NtfyExporter } from '../../src/exporters/ntfy.js';
 import { TelegramExporter } from '../../src/exporters/telegram.js';
 import { IntervalsExporter } from '../../src/exporters/intervals.js';
 import { RunalyzeExporter } from '../../src/exporters/runalyze.js';
+import { WgerExporter } from '../../src/exporters/wger.js';
 import type { ExporterConfig } from '../../src/exporters/config.js';
 
 describe('createExporters()', () => {
@@ -145,6 +146,17 @@ describe('createExporters()', () => {
     expect(exporters).toHaveLength(1);
     expect(exporters[0]).toBeInstanceOf(RunalyzeExporter);
     expect(exporters[0].name).toBe('runalyze');
+  });
+
+  it('creates WgerExporter for wger', () => {
+    const config: ExporterConfig = {
+      exporters: ['wger'],
+      wger: { baseUrl: 'https://wger.example', token: 'tok-1', syncMeasurements: true },
+    };
+    const exporters = createExporters(config);
+    expect(exporters).toHaveLength(1);
+    expect(exporters[0]).toBeInstanceOf(WgerExporter);
+    expect(exporters[0].name).toBe('wger');
   });
 
   it('returns empty array for empty exporters list', () => {

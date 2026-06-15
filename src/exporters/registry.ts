@@ -11,6 +11,7 @@ import type {
   TelegramConfig,
   IntervalsConfig,
   RunalyzeConfig,
+  WgerConfig,
 } from './config.js';
 import { garminSchema, GarminExporter } from './garmin.js';
 import { mqttSchema, MqttExporter } from './mqtt.js';
@@ -22,6 +23,7 @@ import { stravaSchema, StravaExporter } from './strava.js';
 import { telegramSchema, TelegramExporter } from './telegram.js';
 import { intervalsSchema, IntervalsExporter } from './intervals.js';
 import { runalyzeSchema, RunalyzeExporter } from './runalyze.js';
+import { wgerSchema, WgerExporter } from './wger.js';
 
 // --- Registry entry type ---
 
@@ -164,6 +166,17 @@ export const EXPORTER_REGISTRY: ExporterRegistryEntry[] = [
         token: requireField(config, 'runalyze', 'token'),
       };
       return new RunalyzeExporter(runalyzeConfig);
+    },
+  },
+  {
+    schema: wgerSchema,
+    factory: (config) => {
+      const wgerConfig: WgerConfig = {
+        baseUrl: requireField(config, 'wger', 'base_url'),
+        token: requireField(config, 'wger', 'token'),
+        syncMeasurements: (config.sync_measurements as boolean) ?? true,
+      };
+      return new WgerExporter(wgerConfig);
     },
   },
 ];

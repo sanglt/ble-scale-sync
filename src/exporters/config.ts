@@ -12,7 +12,8 @@ export type ExporterName =
   | 'strava'
   | 'telegram'
   | 'intervals'
-  | 'runalyze';
+  | 'runalyze'
+  | 'wger';
 
 const KNOWN_EXPORTERS = new Set<ExporterName>([
   'garmin',
@@ -25,6 +26,7 @@ const KNOWN_EXPORTERS = new Set<ExporterName>([
   'telegram',
   'intervals',
   'runalyze',
+  'wger',
 ]);
 
 export interface MqttConfig {
@@ -91,6 +93,13 @@ export interface RunalyzeConfig {
   token: string;
 }
 
+export interface WgerConfig {
+  baseUrl: string;
+  token: string;
+  /** Also push body-composition metrics as Wger custom measurements, not just weight. */
+  syncMeasurements: boolean;
+}
+
 export interface ExporterConfig {
   exporters: ExporterName[];
   mqtt?: MqttConfig;
@@ -102,6 +111,7 @@ export interface ExporterConfig {
   telegram?: TelegramConfig;
   intervals?: IntervalsConfig;
   runalyze?: RunalyzeConfig;
+  wger?: WgerConfig;
 }
 
 function fail(msg: string): never {
@@ -317,6 +327,27 @@ export function loadExporterConfig(): ExporterConfig {
     runalyze = { token };
   }
 
+  let wger: WgerConfig | undefined;
+  if (exporters.includes('wger')) {
+    const baseUrl = process.env.WGER_BASE_URL?.trim();
+    if (!baseUrl) {
+      fail('WGER_BASE_URL is required when wger exporter is enabled.');
+    }
+    const token = process.env.WGER_TOKEN?.trim();
+    if (!token) {
+      fail('WGER_TOKEN is required when wger exporter is enabled.');
+    }
+    wger = {
+      baseUrl,
+      token,
+      syncMeasurements: parseBoolean(
+        'WGER_SYNC_MEASUREMENTS',
+        process.env.WGER_SYNC_MEASUREMENTS?.trim(),
+        true,
+      ),
+    };
+  }
+
   return {
     exporters,
     mqtt,
@@ -328,5 +359,6 @@ export function loadExporterConfig(): ExporterConfig {
     telegram,
     intervals,
     runalyze,
+    wger,
   };
 }

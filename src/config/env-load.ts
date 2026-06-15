@@ -85,6 +85,14 @@ export function loadEnvConfig(): AppConfig {
         token: exporterConfig.runalyze.token,
       });
     }
+    if (name === 'wger' && exporterConfig.wger) {
+      const w = exporterConfig.wger;
+      Object.assign(entry, {
+        base_url: w.baseUrl,
+        token: w.token,
+        sync_measurements: w.syncMeasurements,
+      });
+    }
 
     return entry as ExporterEntry;
   });

@@ -19,8 +19,8 @@ import type { ExporterEntry } from '../../src/config/schema.js';
 // ─── EXPORTER_REGISTRY ─────────────────────────────────────────────────────
 
 describe('EXPORTER_REGISTRY', () => {
-  it('contains 10 exporter entries', () => {
-    expect(EXPORTER_REGISTRY).toHaveLength(10);
+  it('contains 11 exporter entries', () => {
+    expect(EXPORTER_REGISTRY).toHaveLength(11);
   });
 
   it('has entries for all known exporters', () => {
@@ -35,6 +35,7 @@ describe('EXPORTER_REGISTRY', () => {
     expect(names).toContain('telegram');
     expect(names).toContain('intervals');
     expect(names).toContain('runalyze');
+    expect(names).toContain('wger');
   });
 
   it('each entry has a schema and factory', () => {
@@ -52,8 +53,8 @@ describe('EXPORTER_REGISTRY', () => {
 // ─── EXPORTER_SCHEMAS ──────────────────────────────────────────────────────
 
 describe('EXPORTER_SCHEMAS', () => {
-  it('derives 10 schemas from registry', () => {
-    expect(EXPORTER_SCHEMAS).toHaveLength(10);
+  it('derives 11 schemas from registry', () => {
+    expect(EXPORTER_SCHEMAS).toHaveLength(11);
   });
 
   it('each schema has required fields', () => {
@@ -195,14 +196,27 @@ describe('EXPORTER_SCHEMAS', () => {
     expect(requiredFields).toHaveLength(1);
     expect(requiredFields.map((f) => f.key)).toContain('token');
   });
+
+  it('wger schema supports per-user only', () => {
+    const wger = EXPORTER_SCHEMAS.find((s) => s.name === 'wger');
+    expect(wger).toBeDefined();
+    expect(wger!.supportsGlobal).toBe(false);
+    expect(wger!.supportsPerUser).toBe(true);
+  });
+
+  it('wger schema has base_url and token as required fields', () => {
+    const wger = EXPORTER_SCHEMAS.find((s) => s.name === 'wger');
+    const requiredFields = wger!.fields.filter((f) => f.required);
+    expect(requiredFields.map((f) => f.key).sort()).toEqual(['base_url', 'token']);
+  });
 });
 
 // ─── KNOWN_EXPORTER_NAMES ──────────────────────────────────────────────────
 
 describe('KNOWN_EXPORTER_NAMES', () => {
-  it('is a Set with 10 entries', () => {
+  it('is a Set with 11 entries', () => {
     expect(KNOWN_EXPORTER_NAMES).toBeInstanceOf(Set);
-    expect(KNOWN_EXPORTER_NAMES.size).toBe(10);
+    expect(KNOWN_EXPORTER_NAMES.size).toBe(11);
   });
 
   it('contains all exporter names', () => {
@@ -216,6 +230,7 @@ describe('KNOWN_EXPORTER_NAMES', () => {
     expect(KNOWN_EXPORTER_NAMES.has('telegram')).toBe(true);
     expect(KNOWN_EXPORTER_NAMES.has('intervals')).toBe(true);
     expect(KNOWN_EXPORTER_NAMES.has('runalyze')).toBe(true);
+    expect(KNOWN_EXPORTER_NAMES.has('wger')).toBe(true);
   });
 });
 

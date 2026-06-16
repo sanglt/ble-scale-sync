@@ -1,5 +1,5 @@
 import type { ScaleAdapter, ScaleReading, BleDeviceInfo } from '../interfaces/scale-adapter.js';
-import { hasParseableBroadcastSource } from './shared.js';
+import { hasParseableBroadcastSource, type RawReading } from './shared.js';
 
 // ─── Advertisement decision (pure) ─────────────────────────────────────────────
 
@@ -83,4 +83,66 @@ export function evaluateAdvertisement(
     return { kind: 'none' };
   }
   return { kind: 'gatt' };
+}
+
+// ─── Grace timers (per-address, weight-only fallback) ──────────────────────────
+
+/**
+ * Owns the `graceTimers` / `graceReadings` Map pair that was declared verbatim
+ * in the mqtt-proxy watcher, esphome-proxy scan and esphome-proxy watcher, and
+ * (single-key) the noble broadcastScan (#242).
+ *
+ * When a passive adapter emits a weight-only frame, `hold` records it and arms a
+ * single timer for that address. If an impedance-bearing frame arrives first the
+ * caller cancels it; otherwise the timer fires `onElapsed` with the weight-only
+ * reading after `graceMs` so a complete-less reading is still forwarded.
+ */
+export class GraceTimers {
+  private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly readings = new Map<string, RawReading>();
+
+  constructor(
+    private readonly graceMs: number,
+    private readonly onElapsed: (address: string, reading: RawReading) => void,
+  ) {}
+
+  /**
+   * Record (or overwrite) the weight-only reading for an address and arm a grace
+   * timer if one is not already running for it. Arming is once-per-address: a
+   * later partial frame refreshes the stored reading without resetting the clock,
+   * matching every original call site.
+   */
+  hold(address: string, reading: RawReading): void {
+    this.readings.set(address, reading);
+    if (this.timers.has(address)) return;
+    this.timers.set(
+      address,
+      setTimeout(() => {
+        // Delete the entry BEFORE invoking the callback so an onElapsed that
+        // calls clear() (noble) cannot double-clear, and the callback fires
+        // exactly once. #242
+        this.timers.delete(address);
+        const r = this.readings.get(address);
+        this.readings.delete(address);
+        if (r) this.onElapsed(address, r);
+      }, this.graceMs),
+    );
+  }
+
+  /** Cancel a pending timer for an address (a complete reading arrived). */
+  cancel(address: string): void {
+    const t = this.timers.get(address);
+    if (t) {
+      clearTimeout(t);
+      this.timers.delete(address);
+    }
+    this.readings.delete(address);
+  }
+
+  /** Clear all pending timers and stored readings (teardown). */
+  clear(): void {
+    for (const t of this.timers.values()) clearTimeout(t);
+    this.timers.clear();
+    this.readings.clear();
+  }
 }

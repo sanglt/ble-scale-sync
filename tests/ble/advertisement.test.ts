@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
-import { evaluateAdvertisement } from '../../src/ble/advertisement.js';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { evaluateAdvertisement, GraceTimers } from '../../src/ble/advertisement.js';
+import type { RawReading } from '../../src/ble/shared.js';
 import type {
   ScaleAdapter,
   ScaleReading,
@@ -140,5 +141,75 @@ describe('evaluateAdvertisement', () => {
     const adapter = baseAdapter({ charNotifyUuid: '', parseBroadcast: () => null });
     const d = evaluateAdvertisement(adapter, MFG(0, 0), { waitForBroadcast: false });
     expect(d).toEqual({ kind: 'none' });
+  });
+});
+
+const sharedAdapter = baseAdapter({});
+const raw = (weight: number): RawReading =>
+  ({ reading: { weight, impedance: 0 }, adapter: sharedAdapter }) as RawReading;
+
+describe('GraceTimers', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it('fires onElapsed with the held reading after graceMs', () => {
+    const onElapsed = vi.fn();
+    const g = new GraceTimers(1000, onElapsed);
+    g.hold('AA', raw(70));
+    expect(onElapsed).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(999);
+    expect(onElapsed).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(onElapsed).toHaveBeenCalledTimes(1);
+    expect(onElapsed).toHaveBeenCalledWith('AA', raw(70));
+  });
+
+  it('arms once per address: a second hold refreshes the reading without resetting the clock', () => {
+    const onElapsed = vi.fn();
+    const g = new GraceTimers(1000, onElapsed);
+    g.hold('AA', raw(70));
+    vi.advanceTimersByTime(800);
+    g.hold('AA', raw(71)); // refresh, clock not reset
+    vi.advanceTimersByTime(200); // 1000 total since first hold
+    expect(onElapsed).toHaveBeenCalledTimes(1);
+    expect(onElapsed).toHaveBeenCalledWith('AA', raw(71));
+  });
+
+  it('cancel stops a pending timer and drops the stored reading', () => {
+    const onElapsed = vi.fn();
+    const g = new GraceTimers(1000, onElapsed);
+    g.hold('AA', raw(70));
+    g.cancel('AA');
+    vi.advanceTimersByTime(2000);
+    expect(onElapsed).not.toHaveBeenCalled();
+  });
+
+  it('tracks independent timers per address', () => {
+    const onElapsed = vi.fn();
+    const g = new GraceTimers(1000, onElapsed);
+    g.hold('AA', raw(70));
+    g.hold('BB', raw(80));
+    g.cancel('AA');
+    vi.advanceTimersByTime(1000);
+    expect(onElapsed).toHaveBeenCalledTimes(1);
+    expect(onElapsed).toHaveBeenCalledWith('BB', raw(80));
+  });
+
+  it('clear cancels all pending timers', () => {
+    const onElapsed = vi.fn();
+    const g = new GraceTimers(1000, onElapsed);
+    g.hold('AA', raw(70));
+    g.hold('BB', raw(80));
+    g.clear();
+    vi.advanceTimersByTime(2000);
+    expect(onElapsed).not.toHaveBeenCalled();
+  });
+
+  it('a clear() called from inside onElapsed does not throw or double-fire', () => {
+    const onElapsed = vi.fn(() => g.clear());
+    const g = new GraceTimers(1000, onElapsed);
+    g.hold('AA', raw(70));
+    vi.advanceTimersByTime(1000);
+    expect(onElapsed).toHaveBeenCalledTimes(1);
   });
 });

@@ -397,6 +397,19 @@ class BleBridge:
         addr_type: 0 = public, 1 = random (from scan results).
         """
         _ble.active(True)
+        # The streaming scan installs the firmware's own _ble.irq() handler on
+        # the shared BLE singleton, which replaces aioble's central dispatcher.
+        # aioble registers its dispatcher only once at import and never restores
+        # it, so after a scan the _IRQ_PERIPHERAL_CONNECT event is delivered to
+        # the scan handler and dropped, making every connect time out (#231).
+        # Hand the IRQ back to aioble before any aioble call; start_streaming()
+        # re-installs the scan handler after the session.
+        try:
+            import aioble.core as _aioble_core
+
+            _ble.irq(_aioble_core.ble_irq)
+        except Exception as e:  # noqa: BLE001
+            print("Warning: could not restore aioble IRQ before connect: %s" % e)
         addr_bytes = bytes(int(b, 16) for b in address.split(":"))
         # Reclaim heap before connecting. NimBLE allocates its connection from
         # the ESP-IDF heap, and an empty MicroPython split is returned to that

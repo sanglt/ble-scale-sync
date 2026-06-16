@@ -138,8 +138,37 @@ export async function startDiscoverySafe(
 
 /** Remove a device from BlueZ D-Bus cache to force a fresh proxy on re-discovery. */
 export async function removeDevice(btAdapter: Adapter, mac: string): Promise<void> {
+  const formatted = formatMac(mac);
+
+  // Never remove a bonded device: BlueZ RemoveDevice deletes the stored pairing
+  // keys (LTK), which desyncs the host bond from the scale's retained bond and
+  // makes the next run's re-pair time out (#168 Beurer BF720). Only unpaired
+  // devices need the fresh-proxy reset (#80/#81); bonded scales keep their bond
+  // so the next connect re-encrypts with the stored LTK instead of pairing.
+  let paired: boolean;
   try {
-    const devSerialized = `dev_${formatMac(mac).replace(/:/g, '_')}`;
+    const device = await btAdapter.getDevice(formatted);
+    // node-ble types isPaired() loosely; BusHelper.prop unwraps the Variant to a
+    // real boolean at runtime, so cast through unknown like ensureBonded does.
+    paired = ((await device.isPaired()) as unknown as boolean) === true;
+  } catch (err) {
+    // 'Device not found' => not in the BlueZ cache, so there is no bond to
+    // preserve and removal is a harmless no-op; proceed. Any OTHER error is a
+    // transient D-Bus failure on a device that may well be bonded, so fail safe
+    // and skip removal rather than risk wiping a real bond.
+    if (!errMsg(err).includes('Device not found')) {
+      bleLog.debug(`Skipping RemoveDevice: bond state unknown (${errMsg(err)})`);
+      return;
+    }
+    paired = false;
+  }
+  if (paired) {
+    bleLog.debug('Skipping RemoveDevice: device is bonded (preserving pairing keys)');
+    return;
+  }
+
+  try {
+    const devSerialized = `dev_${formatted.replace(/:/g, '_')}`;
     const adapterHelper = helperOf(btAdapter);
     await adapterHelper.callMethod('RemoveDevice', `${adapterHelper.object}/${devSerialized}`);
     bleLog.debug('Removed device from BlueZ cache');

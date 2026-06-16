@@ -137,6 +137,7 @@ function makeCtx(users: UserConfig[], overrides: CtxOverrides = {}): AppContext 
     esphomeProxy: undefined,
     signal: new AbortController().signal,
     exporterCache: new Map(),
+    lastExportedWeights: new Map(),
     embeddedBroker: null,
     display: overrides.display,
     abortApp: vi.fn(),

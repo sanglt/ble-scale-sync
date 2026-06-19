@@ -53,12 +53,68 @@ def _aioble_ble_irq(event, data):  # noqa: ARG001
 _captured = {}
 
 
+class _AsyncDiscover:
+    """Models aioble's ClientDiscover: an async iterator (async for), NOT a
+    coroutine. The production bug was wrapping this object in asyncio.wait_for,
+    which calls create_task and raises 'TypeError: coroutine expected' (#231)."""
+
+    def __init__(self, items):
+        self._items = list(items)
+        self._i = 0
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if self._i >= len(self._items):
+            raise StopAsyncIteration
+        item = self._items[self._i]
+        self._i += 1
+        return item
+
+
+class _FakeChar:
+    def __init__(self, uuid, properties):
+        self.uuid = uuid
+        self.properties = properties
+
+
+class _FakeService:
+    def __init__(self, chars):
+        self._chars = chars
+
+    def characteristics(self):
+        # aioble returns an async iterator here, not a coroutine.
+        return _AsyncDiscover(self._chars)
+
+
 class _FakeConn:
-    async def services(self):
-        return []
+    def services(self):
+        # aioble returns an async iterator here, not a coroutine. Empty by
+        # default so the IRQ/addr-type tests keep asserting {"chars": []}.
+        return _AsyncDiscover([])
 
     async def disconnect(self):
         pass
+
+    def is_connected(self):
+        return True
+
+
+class _FakeConnWithChars:
+    """A connection that discovers one service with two characteristics, used to
+    prove connect() drives discovery via async for and maps properties (#231)."""
+
+    def __init__(self):
+        self.disconnected = False
+
+    def services(self):
+        notify_char = _FakeChar("0000fff1-0000-1000-8000-00805f9b34fb", _bt.FLAG_NOTIFY | _bt.FLAG_READ)
+        write_char = _FakeChar("0000fff2-0000-1000-8000-00805f9b34fb", _bt.FLAG_WRITE_NO_RESPONSE)
+        return _AsyncDiscover([_FakeService([notify_char, write_char])])
+
+    async def disconnect(self):
+        self.disconnected = True
 
     def is_connected(self):
         return True
@@ -163,6 +219,51 @@ class TestConnectFallbackTriesOppositeType(unittest.IsolatedAsyncioTestCase):
         # non-timeout TypeError; the fallback (1) must still run and succeed.
         self.assertEqual(attempts, [0, 1])
         self.assertEqual(result, {"chars": []})
+
+
+class TestConnectDiscoversCharsViaAsyncFor(unittest.IsolatedAsyncioTestCase):
+    """connect() must drive aioble's async-iterator services()/characteristics()
+    with `async for`. Wrapping the iterator in asyncio.wait_for raised
+    'TypeError: coroutine expected' and stranded the autonomous connect (#231)."""
+
+    async def test_discovery_yields_mapped_characteristics(self):
+        conn = _FakeConnWithChars()
+
+        class _DeviceReturningConn:
+            def __init__(self, addr_type, addr_bytes):
+                self._addr_type = addr_type
+
+            async def connect(self, timeout_ms=None, scan_duration_ms=None):
+                return conn
+
+        orig_device = _aioble.Device
+        _aioble.Device = _DeviceReturningConn
+        try:
+            bridge = ble_bridge.BleBridge()
+            result = await bridge.connect("84:FC:E6:53:06:1C", 0)
+        finally:
+            _aioble.Device = orig_device
+
+        uuids = [c["uuid"] for c in result["chars"]]
+        self.assertEqual(
+            uuids,
+            [
+                "0000fff100001000800000805f9b34fb",
+                "0000fff200001000800000805f9b34fb",
+            ],
+        )
+        # Property bitmask -> string list mapping is preserved.
+        by_uuid = {c["uuid"]: c["properties"] for c in result["chars"]}
+        self.assertEqual(
+            sorted(by_uuid["0000fff100001000800000805f9b34fb"]),
+            ["notify", "read"],
+        )
+        self.assertEqual(
+            by_uuid["0000fff200001000800000805f9b34fb"],
+            ["write-without-response"],
+        )
+        # The discovered chars are cached on the bridge for start_notify().
+        self.assertIn("0000fff100001000800000805f9b34fb", bridge._chars)
 
 
 if __name__ == "__main__":

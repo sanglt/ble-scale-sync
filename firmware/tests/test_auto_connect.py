@@ -255,6 +255,127 @@ class TestLazyNotifyConfig(unittest.TestCase):
         self.assertTrue(hasattr(main, "_lazy_notify"))
 
 
+class _RecordingBridge:
+    """Minimal bridge double that records start_notify(uuid, fn) calls so a test
+    can assert whether the connect handlers enabled notify eagerly or not (#231).
+    Models just the surface main.handle_connect / _auto_gatt_connect touch."""
+
+    def __init__(self):
+        self.started = []  # list of uuid_str passed to start_notify
+
+    def stop_streaming(self):
+        pass
+
+    def start_streaming(self):
+        pass
+
+    async def disconnect(self):
+        pass
+
+    async def connect(self, address, addr_type=0):
+        return {
+            "chars": [
+                {"uuid": "0000fff100001000800000805f9b34fb", "properties": ["notify"]},
+                {"uuid": "0000fff200001000800000805f9b34fb", "properties": ["write"]},
+            ]
+        }
+
+    async def start_notify(self, uuid_str, publish_fn):
+        self.started.append(uuid_str)
+
+    def set_on_disconnect(self, cb):
+        pass
+
+
+class _NoopClient:
+    """Async client double: subscribe/publish record their topics (and otherwise
+    no-op) so the connect handlers can run on a host without a broker AND a test
+    can assert which topics were subscribed/published (#231)."""
+
+    def __init__(self):
+        self.subscribed = []  # list of subscribed topics
+        self.published = []  # list of published topics
+
+    async def subscribe(self, topic, qos=0):
+        self.subscribed.append(topic)
+
+    async def publish(self, topic, payload, qos=0, retain=False):
+        self.published.append(topic)
+
+    def isconnected(self):
+        return True
+
+
+class TestLazyNotifyEnable(unittest.IsolatedAsyncioTestCase):
+    """handle_connect / _auto_gatt_connect must NOT eager-enable notify when
+    _lazy_notify is set, and handle_subscribe must enable a single char on
+    demand. The eager (old-host) path must still enable on connect (#231)."""
+
+    def setUp(self):
+        self._orig_bridge = main.bridge
+        self._orig_client = main.client
+        self._orig_lazy = main._lazy_notify
+        self._orig_char_sub = main._char_subscribed
+        self._orig_continuous = main.board.CONTINUOUS_SCAN
+        main.bridge = _RecordingBridge()
+        main.client = _NoopClient()
+        main._char_subscribed = True  # skip the write/read wildcard subscribe path
+        main.board.CONTINUOUS_SCAN = False
+
+    def tearDown(self):
+        main.bridge = self._orig_bridge
+        main.client = self._orig_client
+        main._lazy_notify = self._orig_lazy
+        main._char_subscribed = self._orig_char_sub
+        main.board.CONTINUOUS_SCAN = self._orig_continuous
+        main._busy = False
+        main._scan_paused = False
+
+    async def test_handle_connect_eager_when_flag_absent(self):
+        main._lazy_notify = False
+        import json as _json
+        await main.handle_connect(_json.dumps({"address": "84:FC:E6:53:06:1C", "addr_type": 0}))
+        # Old-host behavior: notify enabled eagerly for the one notify char.
+        self.assertEqual(main.bridge.started, ["0000fff100001000800000805f9b34fb"])
+
+    async def test_handle_connect_does_not_eager_enable_when_lazy(self):
+        main._lazy_notify = True
+        import json as _json
+        await main.handle_connect(_json.dumps({"address": "84:FC:E6:53:06:1C", "addr_type": 0}))
+        # Lazy: connect publishes chars but enables NO notify until a subscribe cmd.
+        self.assertEqual(main.bridge.started, [])
+
+    async def test_auto_connect_does_not_eager_enable_when_lazy(self):
+        main._lazy_notify = True
+        await main._auto_gatt_connect("84:FC:E6:53:06:1C", 0)
+        self.assertEqual(main.bridge.started, [])
+
+    async def test_handle_subscribe_enables_named_char(self):
+        main._lazy_notify = True
+        # Connect first so bridge has chars (the recording bridge ignores them,
+        # but this mirrors the real ordering).
+        await main._auto_gatt_connect("84:FC:E6:53:06:1C", 0)
+        self.assertEqual(main.bridge.started, [])
+        await main.handle_subscribe("0000fff100001000800000805f9b34fb")
+        self.assertEqual(main.bridge.started, ["0000fff100001000800000805f9b34fb"])
+
+    async def test_lazy_connect_still_publishes_connected(self):
+        # The fix only DEFERS notify; the connect publish (chars -> host) must be
+        # unchanged in lazy mode. Pin it so a regression that drops the connected
+        # publish when lazy is caught by the firmware suite (#231).
+        main._lazy_notify = True
+        await main._auto_gatt_connect("84:FC:E6:53:06:1C", 0)
+        self.assertEqual(main.bridge.started, [])  # notify deferred
+        self.assertIn(main.topic("connected"), main.client.published)
+
+    async def test_on_connect_subscribes_subscribe_wildcard(self):
+        # on_connect must subscribe the per-char notify-enable wildcard so the
+        # firmware is ready for subscribe/<uuid> after a connect (#231). With a
+        # char already subscribed, write/# and read/# are also (re)subscribed.
+        await main.on_connect(main.client)
+        self.assertIn(main.topic("subscribe/#"), main.client.subscribed)
+
+
 class TestWaitNotBusy(unittest.IsolatedAsyncioTestCase):
     """_wait_not_busy: serialize host connect against an in-flight BLE op (#231)."""
 

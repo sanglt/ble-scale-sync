@@ -53,20 +53,40 @@ def _aioble_ble_irq(event, data):  # noqa: ARG001
 _captured = {}
 
 
+class _DiscoveryState:
+    """Models aioble's single per-connection `_discover` slot. aioble allows
+    only one discovery (services OR characteristics) in flight per connection;
+    starting a second while one is unfinished raises ValueError (#231 fix 8)."""
+
+    def __init__(self):
+        self.active = None
+
+
 class _AsyncDiscover:
     """Models aioble's ClientDiscover: an async iterator (async for), NOT a
-    coroutine. The production bug was wrapping this object in asyncio.wait_for,
-    which calls create_task and raises 'TypeError: coroutine expected' (#231)."""
+    coroutine. It claims the connection's single discovery slot on first
+    iteration and releases it on exhaustion, mirroring aioble's _start /
+    StopAsyncIteration handling. Wrapping it in asyncio.wait_for raised
+    'TypeError: coroutine expected' (#231 fix 7); nesting two of them raised
+    'ValueError: Discovery in progress' (#231 fix 8)."""
 
-    def __init__(self, items):
+    def __init__(self, state, items):
+        self._state = state
         self._items = list(items)
         self._i = 0
+        self._started = False
 
     def __aiter__(self):
         return self
 
     async def __anext__(self):
+        if not self._started:
+            if self._state.active is not None:
+                raise ValueError("Discovery in progress")
+            self._state.active = self
+            self._started = True
         if self._i >= len(self._items):
+            self._state.active = None
             raise StopAsyncIteration
         item = self._items[self._i]
         self._i += 1
@@ -80,19 +100,24 @@ class _FakeChar:
 
 
 class _FakeService:
-    def __init__(self, chars):
+    def __init__(self, state, chars):
+        self._state = state
         self._chars = chars
 
     def characteristics(self):
-        # aioble returns an async iterator here, not a coroutine.
-        return _AsyncDiscover(self._chars)
+        # aioble returns an async iterator sharing the connection's single
+        # discovery slot, not a coroutine.
+        return _AsyncDiscover(self._state, self._chars)
 
 
 class _FakeConn:
+    def __init__(self):
+        self._state = _DiscoveryState()
+
     def services(self):
         # aioble returns an async iterator here, not a coroutine. Empty by
         # default so the IRQ/addr-type tests keep asserting {"chars": []}.
-        return _AsyncDiscover([])
+        return _AsyncDiscover(self._state, [])
 
     async def disconnect(self):
         pass
@@ -102,16 +127,42 @@ class _FakeConn:
 
 
 class _FakeConnWithChars:
-    """A connection that discovers one service with two characteristics, used to
-    prove connect() drives discovery via async for and maps properties (#231)."""
+    """One service with two characteristics. Proves connect() drains services()
+    before discovering characteristics; the slot-aware mock raises
+    'Discovery in progress' if connect() nests the two discoveries (#231)."""
 
     def __init__(self):
         self.disconnected = False
+        self._state = _DiscoveryState()
 
     def services(self):
         notify_char = _FakeChar("0000fff1-0000-1000-8000-00805f9b34fb", _bt.FLAG_NOTIFY | _bt.FLAG_READ)
         write_char = _FakeChar("0000fff2-0000-1000-8000-00805f9b34fb", _bt.FLAG_WRITE_NO_RESPONSE)
-        return _AsyncDiscover([_FakeService([notify_char, write_char])])
+        service = _FakeService(self._state, [notify_char, write_char])
+        return _AsyncDiscover(self._state, [service])
+
+    async def disconnect(self):
+        self.disconnected = True
+
+    def is_connected(self):
+        return True
+
+
+class _FakeConnTwoServices:
+    """Two services, each with one characteristic. Guards that the discovery
+    slot is released between services, so characteristics() for the second
+    service does not raise 'Discovery in progress' (#231 fix 8)."""
+
+    def __init__(self):
+        self.disconnected = False
+        self._state = _DiscoveryState()
+
+    def services(self):
+        char_a = _FakeChar("0000fff1-0000-1000-8000-00805f9b34fb", _bt.FLAG_NOTIFY)
+        char_b = _FakeChar("00002a9d-0000-1000-8000-00805f9b34fb", _bt.FLAG_READ)
+        service_a = _FakeService(self._state, [char_a])
+        service_b = _FakeService(self._state, [char_b])
+        return _AsyncDiscover(self._state, [service_a, service_b])
 
     async def disconnect(self):
         self.disconnected = True
@@ -264,6 +315,36 @@ class TestConnectDiscoversCharsViaAsyncFor(unittest.IsolatedAsyncioTestCase):
         )
         # The discovered chars are cached on the bridge for start_notify().
         self.assertIn("0000fff100001000800000805f9b34fb", bridge._chars)
+
+    async def test_discovery_releases_slot_between_services(self):
+        # Two services discovered sequentially: characteristics() for the second
+        # service must not raise "Discovery in progress", i.e. connect() drains
+        # services() fully before discovering any characteristics (#231 fix 8).
+        conn = _FakeConnTwoServices()
+
+        class _DeviceReturningConn:
+            def __init__(self, addr_type, addr_bytes):
+                self._addr_type = addr_type
+
+            async def connect(self, timeout_ms=None, scan_duration_ms=None):
+                return conn
+
+        orig_device = _aioble.Device
+        _aioble.Device = _DeviceReturningConn
+        try:
+            bridge = ble_bridge.BleBridge()
+            result = await bridge.connect("84:FC:E6:53:06:1C", 0)
+        finally:
+            _aioble.Device = orig_device
+
+        uuids = [c["uuid"] for c in result["chars"]]
+        self.assertEqual(
+            uuids,
+            [
+                "0000fff100001000800000805f9b34fb",
+                "00002a9d00001000800000805f9b34fb",
+            ],
+        )
 
 
 if __name__ == "__main__":

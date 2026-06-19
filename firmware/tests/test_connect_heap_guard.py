@@ -92,6 +92,14 @@ class TestHeapGuardDecision(unittest.TestCase):
         # No esp32 builtin on a host, so the read returns None and the gate skips.
         self.assertIsNone(ble_bridge._read_idf_heap())
 
+    def test_zero_board_override_collapses_to_crash_floor(self):
+        # The gate composes the effective floor as max(crash floor, board tunable).
+        # A board override of 0 (the shipped default) collapses to the crash floor,
+        # which keeps the gate crash-floor-only on every board. The gate in
+        # connect() MUST use this identical max(...) expression.
+        self.assertEqual(max(ble_bridge.CRASH_FLOOR_LARGEST, 0), 1024)
+        self.assertEqual(max(ble_bridge.CRASH_FLOOR_FREE, 0), 2048)
+
 
 if __name__ == "__main__":
     unittest.main()

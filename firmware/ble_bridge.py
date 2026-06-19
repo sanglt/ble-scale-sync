@@ -443,6 +443,30 @@ class BleBridge:
             gc.collect()
         _log_idf_heap("before connect")
 
+        # Pre-connect IDF-heap crash guard (#139). NimBLE builds the connection from
+        # the ESP-IDF heap; on a no-PSRAM board with WiFi up that heap can be down to
+        # a few hundred bytes contiguous, so device.connect() trips a NULL malloc deep
+        # in npl_freertos_sem_init and the C assert panics the chip (uncatchable from
+        # Python). Reading the heap here and refusing the connect turns that reboot
+        # loop into a clean MemoryError that the existing handlers report and recover
+        # from. The read returns None off-device (host tests), where the gate is a
+        # no-op so the connect proceeds. Effective floor = max(always-on crash floor,
+        # board tunable); the board tunables default to 0 (pure crash floor) until a
+        # maintainer calibrates them from a successful-connect heap delta on a PSRAM
+        # board. Both largest and free are gated because several distinct-sized
+        # allocations must all land.
+        _heap = _read_idf_heap()
+        if _heap is not None:
+            _free, _largest = _heap
+            _min_largest = max(CRASH_FLOOR_LARGEST, getattr(board, "CONNECT_MIN_IDF_LARGEST", 0))
+            _min_free = max(CRASH_FLOOR_FREE, getattr(board, "CONNECT_MIN_IDF_FREE", 0))
+            if _should_skip_connect(_free, _largest, _min_free, _min_largest):
+                raise MemoryError(
+                    "IDF heap too low for GATT connect: free=%d largest=%d (#139); "
+                    "use an ESP32-S3 / PSRAM board for GATT-connect scales"
+                    % (_free, _largest)
+                )
+
         # aioble forwards scan_duration_ms to gap_connect (default 2 s). Scales
         # advertising in short bursts (Eufy P2 Pro) miss that window, so match it
         # to the connect timeout. Both are board-tunable: roomy boards keep the

@@ -1244,3 +1244,37 @@ describe('resolveWriteChar()', () => {
     expect(resolveWriteChar(charMap, adapter)).toBeUndefined();
   });
 });
+
+describe('waitForReading() — adapter with no unlock wiring (#244)', () => {
+  it('arms no unlock interval and writes nothing when unlock fields are absent', async () => {
+    const notifyChar = createMockChar();
+    const writeChar = createMockChar();
+    const device = createMockDevice();
+    const { charMap } = createCharMap([
+      [NOTIFY_UUID, notifyChar],
+      [WRITE_UUID, writeChar],
+    ]);
+
+    // No unlockCommand / unlockIntervalMs, no onConnected: a pure
+    // notify-and-parse adapter. Legal because Unlockable is now opt-in.
+    const adapter: ScaleAdapter = {
+      name: 'NoUnlock',
+      charNotifyUuid: NOTIFY_UUID,
+      charWriteUuid: WRITE_UUID,
+      matches: (_i: BleDeviceInfo) => true,
+      parseNotification: (data: Buffer) =>
+        data[0] === 0x10 ? { weight: 75.5, impedance: 500 } : null,
+      isComplete: (r: ScaleReading) => r.weight > 0 && r.impedance > 0,
+      computeMetrics: () => SAMPLE_BODY_COMP,
+    };
+
+    const promise = waitForReading(charMap, device, adapter, PROFILE, '');
+    await vi.waitFor(() => expect(notifyChar.subscribeCalled).toBe(true));
+    notifyChar.triggerData(Buffer.from([0x10]));
+
+    const result = await promise;
+    expect(result).toEqual(SAMPLE_BODY_COMP);
+    // No legacy unlock write was issued.
+    expect(writeChar.writtenData.length).toBe(0);
+  });
+});

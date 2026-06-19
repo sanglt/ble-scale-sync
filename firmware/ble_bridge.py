@@ -426,19 +426,22 @@ class BleBridge:
         except Exception as e:  # noqa: BLE001
             print("Warning: could not restore aioble IRQ before connect: %s" % e)
         addr_bytes = bytes(int(b, 16) for b in address.split(":"))
-        # Reclaim heap before connecting. NimBLE allocates its connection from
-        # the ESP-IDF heap, and an empty MicroPython split is returned to that
-        # heap during a GC pass (MICROPY_GC_SPLIT_HEAP_AUTO), so collecting after
-        # the scan buffers are freed gives NimBLE the best chance to allocate on
-        # a tight no-PSRAM board (#139). Two passes: the second can release a
-        # split that the first only emptied.
+        # Two gc.collect() passes before connecting (#139). Under MICROPY_GC_SPLIT_HEAP_AUTO
+        # a MicroPython split is returned to the ESP-IDF heap only when it becomes fully
+        # empty during a pass, so gc.collect() cannot hand kilobytes back to the IDF heap
+        # that NimBLE allocates from; on a busy no-PSRAM board it usually frees zero whole
+        # splits. It is kept because the second pass is the single cheap lever that can
+        # release a split the first only just emptied (for example the scan buffers), and
+        # it costs only a few ms against a multi-second connect window. gc.mem_free()
+        # measures the GC heap, not this pool, so it must never gate a connect; the real
+        # guard is the IDF-heap read below.
         import gc
 
         gc.collect()
-        # The second pass can release a split the first only emptied, which
-        # matters on a tight no-PSRAM board (#139). On PSRAM boards it only adds
-        # latency before connect, and a stepped-on scale stays connectable
-        # briefly (#231), so gate it on the aggressive-GC board flag.
+        # The second pass can release a split the first only emptied, which matters on a
+        # tight no-PSRAM board (#139). On PSRAM boards it only adds latency before connect,
+        # and a stepped-on scale stays connectable briefly (#231), so gate it on the
+        # aggressive-GC board flag.
         if getattr(board, "AGGRESSIVE_GC", True):
             gc.collect()
         _log_idf_heap("before connect")

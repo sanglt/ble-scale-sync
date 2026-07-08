@@ -3,6 +3,7 @@ import type {
   ScaleAdapterCore,
   GattWiring,
   Unlockable,
+  HoldForComposition,
   ScaleReading,
   UserProfile,
   BodyComposition,
@@ -30,7 +31,9 @@ const RESP_MEASURED = 0x02;
  *
  * Body-composition formulas ported from openScale's YunmaiLib.
  */
-export class YunmaiScaleAdapter implements ScaleAdapterCore, GattWiring, Unlockable {
+export class YunmaiScaleAdapter
+  implements ScaleAdapterCore, GattWiring, Unlockable, HoldForComposition
+{
   readonly name = 'Yunmai';
   readonly match: MatchDescriptor = {
     priority: 190,
@@ -100,10 +103,28 @@ export class YunmaiScaleAdapter implements ScaleAdapterCore, GattWiring, Unlocka
   }
 
   isComplete(reading: ScaleReading): boolean {
-    if (reading.weight <= 0) return false;
-    // Mini/SE: wait for impedance data for full body composition
-    if (this.isMini) return reading.impedance > 0;
-    return true;
+    return reading.weight > 0;
+  }
+
+  /**
+   * Mini/SE variants embed impedance in the same final frame as the weight, so a
+   * complete reading either already carries impedance or never will. Hold the
+   * link briefly after the first weight-only final frame to prefer a frame that
+   * carries impedance, then resolve weight-only rather than hanging until the
+   * overall read timeout. Some SE units (e.g. YUNMAI-ISSE) have no working
+   * bioimpedance sensor and stream weight forever with impedance 0 (#257).
+   * Standard weight-only variants set no hold and resolve immediately.
+   */
+  get completionHoldMs(): number | undefined {
+    return this.isMini ? 4000 : undefined;
+  }
+
+  /**
+   * A reading carrying impedance is the rich/final one, so resolve without waiting
+   * out the hold window. Only consulted for Mini/SE (completionHoldMs set).
+   */
+  isFinal(reading: ScaleReading): boolean {
+    return reading.impedance > 0;
   }
 
   computeMetrics(reading: ScaleReading, profile: UserProfile): BodyComposition {

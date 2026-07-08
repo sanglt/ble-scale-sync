@@ -54,7 +54,7 @@ interface CachedComp {
 }
 
 /**
- * Adapter for Beurer SIG-standard BLE scales (BF720, BF105).
+ * Adapter for Beurer SIG-standard BLE scales (BF720, BF105, BF500).
  *
  * These speak pure Bluetooth SIG GATT: Weight Scale (0x181D / 0x2A9D), Body
  * Composition (0x181B / 0x2A9C) and User Data (0x181C / 0x2A9F) services. Body
@@ -74,7 +74,7 @@ export class BeurerBf720Adapter implements ScaleAdapterCore, GattWiring, MultiCh
   readonly match: MatchDescriptor = {
     priority: 220,
     custom: true,
-    names: { includes: ['bf720', 'bf105'] },
+    names: { includes: ['bf720', 'bf105', 'bf500'] },
     serviceUuids: ['181d', '181b'],
     manufacturerId: 0x0611,
   };
@@ -100,12 +100,22 @@ export class BeurerBf720Adapter implements ScaleAdapterCore, GattWiring, MultiCh
 
   matches(device: BleDeviceInfo): boolean {
     const name = (device.localName || '').toLowerCase();
-    if (name.includes('bf720') || name.includes('bf105')) return true;
+    // BF500 speaks the same SIG consent+bond protocol as the BF720 (verified
+    // against an HCI snoop in #83: consent write 02/userIndex/pinLE, weight on
+    // 0x2A9D, native body composition on 0x2A9C). On Linux auto-discovery the
+    // advertised service UUIDs and manufacturer data are often absent, so the
+    // name is what routes it here instead of falling to Standard GATT, which
+    // sends a code-0 consent on an unbonded link and reads nothing.
+    if (name.includes('bf720') || name.includes('bf105') || name.includes('bf500')) return true;
     if (device.manufacturerData?.id !== BEURER_COMPANY_ID) return false;
     // A bare company id is too weak: this adapter is ordered ahead of the
     // name-based Beurer/Sanitas adapters, so require a SIG WSS/BCS service
     // (advertised or, on the connect path, discovered) before claiming it.
-    const isSig = (u: string) => u === SVC_WEIGHT_SCALE || u === SVC_BODY_COMPOSITION;
+    // Accept both short (advertised) and full (discovered) UUID forms.
+    const isSig = (u: string) => {
+      const n = u.toLowerCase().replace(/-/g, '');
+      return n === SVC_WEIGHT_SCALE || n === SVC_BODY_COMPOSITION || n === '181d' || n === '181b';
+    };
     return (
       (device.serviceUuids ?? []).some(isSig) ||
       (device.serviceData ?? []).some((sd) => isSig(sd.uuid))
@@ -125,7 +135,7 @@ export class BeurerBf720Adapter implements ScaleAdapterCore, GattWiring, MultiCh
     const pin = ctx.scaleAuth?.pin;
     if (pin == null) {
       throw new Error(
-        'Beurer BF720/BF105 needs a consent PIN. Set `users[].beurer_pin` in config.yaml ' +
+        'Beurer BF720/BF105/BF500 needs a consent PIN. Set `users[].beurer_pin` in config.yaml ' +
           '(the code the scale was paired with in the Beurer / openScale app, or shown on ' +
           "the scale's control unit).",
       );

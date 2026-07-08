@@ -130,7 +130,7 @@ export class ReadingWatcher implements Watcher {
     // Broadcast yielded nothing usable. If the adapter has a GATT path, connect
     // on demand through the proxy pool. (decision is 'gatt' or 'none'.)
     if (decision.kind === 'gatt') {
-      this.readViaGatt(adapter, address, addrLc);
+      this.readViaGatt(adapter, info, address, addrLc);
     }
   }
 
@@ -144,7 +144,12 @@ export class ReadingWatcher implements Watcher {
     this.queue.push(raw);
   }
 
-  private readViaGatt(adapter: ScaleAdapter, address: string, addrLc: string): void {
+  private readViaGatt(
+    adapter: ScaleAdapter,
+    info: BleDeviceInfo,
+    address: string,
+    addrLc: string,
+  ): void {
     if (this.gattInFlight.has(addrLc)) return;
     if (!this.pool) return;
     const pool = this.pool;
@@ -152,12 +157,33 @@ export class ReadingWatcher implements Watcher {
     bleLog.info(`Matched: ${adapter.name} (${address}); opening GATT via ESPHome proxy`);
     void (async () => {
       let session: Awaited<ReturnType<typeof pool.connectGatt>> | null = null;
+      // Adapter that actually drives the read; may be re-resolved below once the
+      // characteristics are known. Kept in the outer scope so a failure warning
+      // names the adapter that ran, not the pre-discovery guess.
+      let gattAdapter = adapter;
       try {
         session = await pool.connectGatt(address);
+        // Re-resolve char-aware now that GATT discovery is complete, mirroring
+        // the node-ble post-discovery pass (#177). The advertisement-time match
+        // keyed only on name + advertised service UUIDs, which lets a generic-
+        // service adapter (e.g. Inlife on the bare fff0 vendor service) win over
+        // the correct char-specific one. On a Eufy P1 "T9147" (fff1 + fff4, no
+        // fff2) Inlife matched then failed writing fff2; with the discovered
+        // chars, Inlife rejects (no fff2) and 1byone (Eufy) wins on fff4 (#251).
+        gattAdapter =
+          resolveAdapter(
+            { ...info, characteristicUuids: [...session.charMap.keys()] },
+            this.adapters,
+          ) ?? adapter;
+        if (gattAdapter.name !== adapter.name) {
+          bleLog.info(
+            `Re-resolved adapter after GATT discovery: ${adapter.name} -> ${gattAdapter.name} (${address})`,
+          );
+        }
         const raw = await waitForRawReading(
           session.charMap,
           session.device,
-          adapter,
+          gattAdapter,
           this.profile ?? { height: 170, age: 30, gender: 'male', isAthlete: false },
           address.replace(/[:-]/g, '').toUpperCase(),
           undefined,
@@ -166,7 +192,7 @@ export class ReadingWatcher implements Watcher {
         );
         this.pushDeduped(address, raw, raw.reading.weight);
       } catch (e) {
-        this.warnGattFailure(adapter.name, address, errMsg(e));
+        this.warnGattFailure(gattAdapter.name, address, errMsg(e));
       } finally {
         if (session) await session.close();
         this.gattInFlight.delete(addrLc);

@@ -64,6 +64,17 @@ export class MiScale2Adapter implements ScaleAdapterCore, GattWiring, Unlockable
     if (device.manufacturerData?.id === 0x0611) return false;
     if (name.includes('BF720') || name.includes('BF105')) return false;
     if (KNOWN_PREFIXES.some((p) => name.startsWith(p.toUpperCase()))) return true;
+
+    // Post-discovery: 0x181B is the generic SIG Body Composition Service that
+    // standard BCS/WSS scales also expose (e.g. Beurer BF950, #255), so once the
+    // characteristics are known require the Mi vendor history characteristic
+    // rather than the bare service. This stops Mi (priority 210) from stealing
+    // those devices from Standard GATT in the MAC-pinned re-resolution path.
+    const chars = device.characteristicUuids;
+    if (chars && chars.length > 0) {
+      return chars.map((u) => u.toLowerCase()).includes(CHR_MI_HISTORY);
+    }
+
     // ESPHome / MQTT proxy advertisements may omit the BLE local name. The scale
     // always includes 0x181B as a service-data UUID (AD type 0x16), which lands in
     // serviceData rather than serviceUuids, so check both.

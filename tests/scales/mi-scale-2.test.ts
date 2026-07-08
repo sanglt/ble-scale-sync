@@ -110,6 +110,26 @@ describe('MiScale2Adapter', () => {
         adapter.matches(mockPeripheral('Beurer BF105', ['0000181b00001000800000805f9b34fb'])),
       ).toBe(false);
     });
+
+    it('matches post-discovery when the Mi vendor history char is present', () => {
+      const adapter = makeAdapter();
+      const info = mockPeripheral('', ['0000181b00001000800000805f9b34fb'], undefined, [
+        '00002a2f0000351221180009af100700',
+      ]);
+      expect(adapter.matches(info)).toBe(true);
+    });
+
+    it('does not steal a standard BCS scale (Beurer BF950) that lacks the Mi vendor char (#255)', () => {
+      const adapter = makeAdapter();
+      // BF950 exposes the generic 0x181B service but only standard/proprietary
+      // characteristics, never the Mi vendor history char.
+      const info = mockPeripheral('BF950', ['0000181b00001000800000805f9b34fb'], undefined, [
+        '00002a9d00001000800000805f9b34fb',
+        '00002a2f00001000800000805f9b34fb',
+        '0000faa100001000800000805f9b34fb',
+      ]);
+      expect(adapter.matches(info)).toBe(false);
+    });
   });
 
   describe('parseNotification()', () => {

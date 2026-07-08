@@ -26,6 +26,7 @@ export class OneByoneAdapter implements ScaleAdapterCore, GattWiring {
   readonly name = '1byone (Eufy)';
   readonly match: MatchDescriptor = {
     priority: 70,
+    custom: true,
     names: { includes: ['t9146', 't9147', 't9120', 'health scale'] },
     charUuids: ['fff4'],
   };
@@ -34,7 +35,19 @@ export class OneByoneAdapter implements ScaleAdapterCore, GattWiring {
   readonly normalizesWeight = true;
 
   matches(device: BleDeviceInfo): boolean {
-    return matchesDescriptor(device, this.match);
+    // Name match is unambiguous (T914x / Health Scale); keep it.
+    const name = (device.localName || '').toLowerCase();
+    if (this.match.names?.includes?.some((n) => name.includes(n))) return true;
+
+    const chars = (device.characteristicUuids ?? []).map((u) => u.toLowerCase());
+    if (chars.length === 0) return false;
+    // Post-discovery: 0xFFF4 identifies the 1byone family, but the Eufy P2 also
+    // exposes 0xFFF4 alongside 0xFFF2 + its auth char. A real 1byone C1/P1 uses
+    // fff1 + fff4 and never fff2, so require fff4 WITHOUT fff2. This stops a
+    // nameless Eufy P2 reaching an mqtt-proxy autonomous connect from being
+    // driven with the wrong 1byone protocol (it falls through to its own
+    // adapter via the notify-char fallback instead).
+    return chars.includes(uuid16(0xfff4)) && !chars.includes(uuid16(0xfff2));
   }
 
   /**

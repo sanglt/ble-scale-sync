@@ -56,6 +56,18 @@ describe('OneByoneAdapter', () => {
       const adapter = makeAdapter();
       expect(adapter.matches(mockPeripheral('', [uuid16(0xfff0)]))).toBe(false);
     });
+
+    it('rejects a nameless device exposing 0xFFF4 alongside 0xFFF2 (Eufy P2, review of #251/#258)', () => {
+      const adapter = makeAdapter();
+      // Eufy P2 exposes fff1 + fff2 + fff4; a real 1byone never has fff2, so the
+      // nameless P2 must fall through to its own adapter, not be grabbed here.
+      const info = mockPeripheral('', [uuid16(0xfff0)], undefined, [
+        uuid16(0xfff1),
+        uuid16(0xfff2),
+        uuid16(0xfff4),
+      ]);
+      expect(adapter.matches(info)).toBe(false);
+    });
   });
 
   describe('onConnected()', () => {

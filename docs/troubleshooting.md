@@ -130,6 +130,27 @@ The original Pi Zero W has an ARMv6 CPU, which is **not supported**. The `esbuil
 
 ## Docker Issues
 
+### Container exits at startup with `DBusError` and `AccessDenied`
+
+The log names `An AppArmor policy prevents this sender from sending this message`, mentions `member="Hello"`, and the container exits before any scanning begins.
+
+The host's D-Bus daemon asks the kernel whether the container may talk to `org.freedesktop.DBus`. Docker's `docker-default` AppArmor profile carries no D-Bus rules, and that mediation is deny by default, so the handshake never completes. Ubuntu 24.04 hits this most often because its AppArmor 4.x stack tightened the defaults. Bind-mounting the D-Bus socket is not enough on those hosts. Run the container unconfined:
+
+```bash
+docker run --security-opt apparmor=unconfined ...
+```
+
+Or in `docker-compose.yml`:
+
+```yaml
+services:
+  ble-scale-sync:
+    security_opt:
+      - apparmor=unconfined
+```
+
+The Home Assistant add-on sets the equivalent option in its manifest, so it needs no action. Reported in [#271](https://github.com/KristianP26/ble-scale-sync/issues/271).
+
 ### Container can't find BLE adapter
 
 Make sure you're passing all required flags. See [Getting Started](/guide/getting-started#docker) for the full command. The most common mistake is forgetting `--network host` or the D-Bus volume mount.

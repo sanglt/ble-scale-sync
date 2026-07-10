@@ -7,6 +7,8 @@ import {
 } from '../../src/ble/shared.js';
 import type { BleChar, BleDevice } from '../../src/ble/shared.js';
 import { normalizeUuid, bleLog } from '../../src/ble/types.js';
+import { KoogeekS1Adapter } from '../../src/scales/koogeek-s1.js';
+import { uuid16, xorChecksum } from '../../src/scales/body-comp-helpers.js';
 import type {
   ScaleAdapter,
   ScaleReading,
@@ -871,6 +873,37 @@ describe('waitForRawReading() history collection', () => {
 // ─── per-frame ACK + completion hold ────────────────────────────────────────
 
 describe('waitForRawReading() — per-frame ACK + completion hold', () => {
+  /** #270: run one notify frame through an ACK adapter and report the write call. */
+  async function ackWriteCall(ackWithResponse?: boolean) {
+    const notifyChar = createMockChar();
+    const writeChar = createMockChar();
+    const device = createMockDevice();
+    const { charMap } = createCharMap([
+      [NOTIFY_UUID, notifyChar],
+      [WRITE_UUID, writeChar],
+    ]);
+
+    const adapter = createLegacyAdapter({
+      buildAck: vi.fn(() => [0x01]),
+      parseNotification: vi.fn(() => null),
+      ...(ackWithResponse === undefined ? {} : { ackWithResponse }),
+    });
+
+    void waitForRawReading(charMap, device, adapter, PROFILE, '');
+    await vi.waitFor(() => expect(notifyChar.subscribeCalled).toBe(true));
+    notifyChar.triggerData(Buffer.from([0xe7]));
+    await vi.waitFor(() => expect(writeChar.write).toHaveBeenCalled());
+    return writeChar.write.mock.calls.at(-1);
+  }
+
+  it('writes the ACK with a response by default (Beurer/Sanitas behaviour)', async () => {
+    expect((await ackWriteCall(undefined))?.[1]).toBe(true);
+  });
+
+  it('writes the ACK without a response when the adapter opts out (#270)', async () => {
+    expect((await ackWriteCall(false))?.[1]).toBe(false);
+  });
+
   it('writes the buildAck result back for every notify frame', async () => {
     const notifyChar = createMockChar();
     const writeChar = createMockChar();
@@ -1276,5 +1309,102 @@ describe('waitForReading() — adapter with no unlock wiring (#244)', () => {
     expect(result).toEqual(SAMPLE_BODY_COMP);
     // No legacy unlock write was issued.
     expect(writeChar.writtenData.length).toBe(0);
+  });
+});
+
+// ─── Koogeek-S1 end to end through the real adapter (#270) ──────────────────
+
+describe('waitForRawReading() with the real KoogeekS1Adapter (#270)', () => {
+  const KOOGEEK_NOTIFY = uuid16(0xfff4);
+  const KOOGEEK_WRITE = uuid16(0xfff3);
+
+  /** A stable (command 0x03) frame with the given weight tenths and impedance. */
+  function stableFrame(weightTenths: number, impedance: number): Buffer {
+    const body = [
+      0x55,
+      0xaa,
+      0x55,
+      0xaa,
+      0x03,
+      0x01,
+      0,
+      0,
+      0,
+      (weightTenths >> 8) & 0xff,
+      weightTenths & 0xff,
+      (impedance >> 8) & 0xff,
+      impedance & 0xff,
+    ];
+    return Buffer.from([...body, xorChecksum(body, 0, body.length)]);
+  }
+
+  function koogeekHarness() {
+    const notifyChar = createMockChar();
+    const writeChar = createMockChar();
+    const device = createMockDevice();
+    const { charMap } = createCharMap([
+      [KOOGEEK_NOTIFY, notifyChar],
+      [KOOGEEK_WRITE, writeChar],
+    ]);
+    return { notifyChar, writeChar, device, charMap, adapter: new KoogeekS1Adapter() };
+  }
+
+  it('answers the init frame on fff3 without a response, and never resolves on it', async () => {
+    const { notifyChar, writeChar, device, charMap, adapter } = koogeekHarness();
+    const promise = waitForRawReading(charMap, device, adapter, PROFILE, '');
+    await vi.waitFor(() => expect(notifyChar.subscribeCalled).toBe(true));
+
+    notifyChar.triggerData(Buffer.from('55aa55aa010d010101162601735500000000001a', 'hex'));
+    await vi.waitFor(() => expect(writeChar.write).toHaveBeenCalled());
+
+    const [data, withResponse] = writeChar.write.mock.calls.at(-1)!;
+    expect([...(data as Buffer)]).toEqual([0x55, 0xaa, 0x55, 0xaa, 0x81, 0x01, 0x01, 0x81]);
+    expect(withResponse).toBe(false);
+
+    const pending = await Promise.race([
+      promise.then(() => 'resolved'),
+      new Promise((r) => setTimeout(() => r('pending'), 50)),
+    ]);
+    expect(pending).toBe('pending');
+
+    notifyChar.triggerData(stableFrame(783, 470));
+    expect((await promise).reading).toEqual({ weight: 78.3, impedance: 470 });
+  });
+
+  it('resolves immediately on a stable frame carrying impedance', async () => {
+    const { notifyChar, device, charMap, adapter } = koogeekHarness();
+    const promise = waitForRawReading(charMap, device, adapter, PROFILE, '');
+    await vi.waitFor(() => expect(notifyChar.subscribeCalled).toBe(true));
+
+    notifyChar.triggerData(stableFrame(783, 470));
+    expect((await promise).reading).toEqual({ weight: 78.3, impedance: 470 });
+  });
+
+  it('holds, then resolves weight-only when a stable frame reports no impedance', async () => {
+    vi.useFakeTimers();
+    try {
+      const { notifyChar, device, charMap, adapter } = koogeekHarness();
+      const promise = waitForRawReading(charMap, device, adapter, PROFILE, '');
+      await vi.advanceTimersByTimeAsync(1);
+      expect(notifyChar.subscribeCalled).toBe(true);
+
+      // Measured through socks: stable, but no impedance. Must not hang.
+      notifyChar.triggerData(stableFrame(800, 0));
+      await vi.advanceTimersByTimeAsync(2000);
+
+      expect((await promise).reading).toEqual({ weight: 80, impedance: 0 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('prefers a later impedance-bearing stable frame inside the hold window', async () => {
+    const { notifyChar, device, charMap, adapter } = koogeekHarness();
+    const promise = waitForRawReading(charMap, device, adapter, PROFILE, '');
+    await vi.waitFor(() => expect(notifyChar.subscribeCalled).toBe(true));
+
+    notifyChar.triggerData(stableFrame(800, 0));
+    notifyChar.triggerData(stableFrame(783, 470));
+    expect((await promise).reading).toEqual({ weight: 78.3, impedance: 470 });
   });
 });

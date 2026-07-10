@@ -16,6 +16,7 @@ import { EsCs20mAdapter } from './es-cs20m.js';
 import { ExingtechY1Adapter } from './exingtech-y1.js';
 import { ExcelvanCF369Adapter } from './excelvan-cf369.js';
 import { HesleyScaleAdapter } from './hesley.js';
+import { KoogeekS1Adapter } from './koogeek-s1.js';
 import { InlifeScaleAdapter } from './inlife.js';
 import { DigooScaleAdapter } from './digoo.js';
 import { OneByoneAdapter, OneByoneNewAdapter } from './one-byone.js';
@@ -57,6 +58,9 @@ export const adapters: ScaleAdapter[] = [
   new ExingtechY1Adapter(),
   new ExcelvanCF369Adapter(),
   new HesleyScaleAdapter(),
+  // Koogeek-S1 outranks Inlife because a Koogeek advertises the bare 0xFFF0
+  // service, which Inlife's pre-connect fallback would otherwise claim (#270).
+  new KoogeekS1Adapter(),
   new InlifeScaleAdapter(),
   new DigooScaleAdapter(),
   new OneByoneAdapter(),

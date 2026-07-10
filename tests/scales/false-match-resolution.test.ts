@@ -47,4 +47,45 @@ describe('false-match resolution (#255 / #258 / #251)', () => {
     expect(resolved?.name).toBe('1byone (Eufy)');
     expect(resolved?.name).not.toBe('Inlife');
   });
+
+  const KOOGEEK_CHARS = [0xfff1, 0xfff2, 0xfff3, 0xfff4, 0xfff5, 0xfff6].map(uuid16);
+
+  it('#270: a named Koogeek-S1 resolves to Koogeek-S1, not Inlife', () => {
+    const info: BleDeviceInfo = {
+      localName: 'Koogeek-S1',
+      serviceUuids: [uuid16(0xfff0)],
+      characteristicUuids: KOOGEEK_CHARS,
+    };
+    const resolved = resolveAdapter(info, adapters);
+    expect(resolved?.name).toBe('Koogeek-S1');
+    expect(resolved?.name).not.toBe('Inlife');
+  });
+
+  it('#270: Koogeek never claims a nameless device carrying its characteristics', () => {
+    // Koogeek matches on name only. A structural match would claim a nameless
+    // Eufy P2 on the ESP32 autonomous path, because Eufy's own matcher returns
+    // false without a name and priority therefore cannot protect it.
+    const info: BleDeviceInfo = {
+      localName: '',
+      serviceUuids: [],
+      characteristicUuids: KOOGEEK_CHARS,
+    };
+    expect(resolveAdapter(info, adapters)?.name).not.toBe('Koogeek-S1');
+  });
+
+  it('#270: Koogeek does not steal a nameless 1byone or a nameless Inlife', () => {
+    const oneByone: BleDeviceInfo = {
+      localName: '',
+      serviceUuids: [],
+      characteristicUuids: [uuid16(0xfff1), uuid16(0xfff4)],
+    };
+    expect(resolveAdapter(oneByone, adapters)?.name).toBe('1byone (Eufy)');
+
+    const inlife: BleDeviceInfo = {
+      localName: '',
+      serviceUuids: [],
+      characteristicUuids: [uuid16(0xfff1), uuid16(0xfff2)],
+    };
+    expect(resolveAdapter(inlife, adapters)?.name).toBe('Inlife');
+  });
 });

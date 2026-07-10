@@ -282,6 +282,15 @@ export interface AckProtocol {
    * characteristic after each notification. Return null to write nothing.
    */
   buildAck(data: Buffer): Buffer | number[] | null;
+
+  /**
+   * Whether the ACK is written with a response. Defaults to true, which keeps
+   * the Beurer/Sanitas behaviour. Vendor OEM write characteristics in the
+   * 0xFFF0 and 0xFFB0 families are often write-without-response only, and there
+   * a with-response write is rejected by BlueZ, so the ACK never lands and the
+   * scale never starts streaming. Those adapters set this false.
+   */
+  readonly ackWithResponse?: boolean;
 }
 
 /**

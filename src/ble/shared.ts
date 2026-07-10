@@ -388,7 +388,7 @@ export function waitForRawReading(
         const ack = adapter.buildAck(data);
         if (ack) {
           const ackBuf = Buffer.isBuffer(ack) ? ack : Buffer.from(ack);
-          void ackWriteChar.write(ackBuf, true).catch((e: unknown) => {
+          void ackWriteChar.write(ackBuf, adapter.ackWithResponse ?? true).catch((e: unknown) => {
             if (!resolved) bleLog.debug(`ACK write error: ${errMsg(e)}`);
           });
         }

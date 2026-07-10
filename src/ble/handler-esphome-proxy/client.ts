@@ -1,9 +1,92 @@
+import { createRequire } from 'node:module';
 import type { EsphomeProxyConfig } from '../../config/schema.js';
 import { bleLog, errMsg } from '../types.js';
+
+const nodeRequire = createRequire(import.meta.url);
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 export const CONNECT_TIMEOUT_MS = 30_000;
+
+// ─── Unknown-message patch (#252) ────────────────────────────────────────────
+
+/**
+ * Inert stand-in returned for API messages this library version cannot decode.
+ * `connection.js` reads `message.constructor.type` and calls `message.toObject()`
+ * on every frame, so the placeholder must satisfy both. `mapMessageByType()`
+ * passes an unrecognised type straight through, and nothing listens for
+ * `message.UnknownEsphomeMessage`, so the frame is effectively ignored.
+ */
+class UnknownEsphomeMessage {
+  static type = 'UnknownEsphomeMessage';
+  toObject(): Record<string, never> {
+    return {};
+  }
+}
+
+/** Set before the attempt so a failing patch is not retried on every reconnect. */
+let patchAttempted = false;
+
+/**
+ * Repair `FrameHelper.buildMessage` in `@2colors/esphome-native-api` (1.3.6).
+ *
+ * The shipped implementation does `pb[id_to_type[messageId]].deserializeBinary()`,
+ * which throws for an id it does not know, and then runs
+ * `if (typeof id_to_type[messageId] !== undefined) this.end();`. `typeof` always
+ * yields a string, so that guard is always true and the proxy connection is torn
+ * down for UNKNOWN ids as well. Newer ESPHome firmware emits id 137
+ * (InfraredRFReceiveEvent) on every IR/RF event, so any proxy node with a
+ * `remote_receiver` dropped the connection constantly and lost in-flight
+ * readings. `buildMessage` also returned undefined, which the frame helpers then
+ * dereferenced ("Cannot set properties of undefined (setting 'length')").
+ *
+ * Clients are expected to ignore unrecognised message types, so we skip them and
+ * keep the link up, while preserving the original teardown for a KNOWN type that
+ * fails to parse (there the stream really is desynced).
+ *
+ * Patching the prototype covers both NoiseFrameHelper and PlaintextFrameHelper.
+ * `createRequire` resolves the same module instance the dynamically imported
+ * Client uses (Node shares the CJS require cache with ESM interop). If a future
+ * release moves these internals the feature check and try/catch fall back to the
+ * library default, which is the current behaviour, so this cannot regress.
+ */
+function patchUnknownMessageHandling(): void {
+  if (patchAttempted) return;
+  patchAttempted = true;
+  try {
+    const FrameHelper = nodeRequire('@2colors/esphome-native-api/lib/utils/frameHelper.js');
+    const { id_to_type, pb } = nodeRequire('@2colors/esphome-native-api/lib/utils/messages.js');
+    if (typeof FrameHelper?.prototype?.buildMessage !== 'function') {
+      bleLog.warn(
+        'ESPHome unknown-message patch skipped: buildMessage not found (library internals changed).',
+      );
+      return;
+    }
+    FrameHelper.prototype.buildMessage = function (
+      this: { emit: (event: string, err: Error) => void; end: () => void },
+      messageId: number,
+      bytes: Uint8Array,
+    ): unknown {
+      const type = id_to_type[messageId];
+      if (type === undefined || !pb[type]) {
+        // Unknown id (e.g. 137 InfraredRFReceiveEvent): ignore, keep the link up.
+        return new UnknownEsphomeMessage();
+      }
+      try {
+        return pb[type].deserializeBinary(bytes);
+      } catch {
+        this.emit('error', new Error(`Failed to parse ESPHome message ${type} (id ${messageId}).`));
+        this.end();
+        return undefined;
+      }
+    };
+  } catch (e: unknown) {
+    bleLog.warn(`ESPHome unknown-message patch failed, using library default: ${errMsg(e)}`);
+  }
+}
+
+/** Exposed for the regression test that guards the patched library internals. */
+export const _internals = { patchUnknownMessageHandling };
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -66,6 +149,9 @@ export interface EsphomeConnection {
 // ─── Client factory ──────────────────────────────────────────────────────────
 
 export async function createEsphomeClient(config: EsphomeProxyConfig): Promise<EsphomeClient> {
+  // Must run before the Client (and its FrameHelper) is constructed. #252
+  patchUnknownMessageHandling();
+
   const mod = (await import('@2colors/esphome-native-api')) as unknown as {
     Client: new (options: Record<string, unknown>) => EsphomeClient;
   };

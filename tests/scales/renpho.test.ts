@@ -120,6 +120,18 @@ describe('RenphoScaleAdapter', () => {
       expect(writtenChars).toContain(CHR_VENDOR_WRITE);
       expect(writtenChars).toContain(CHR_UCP);
     });
+
+    // #267 review (P1): the vendor 0xFFE2 service is not advertised (the matcher
+    // rejects devices advertising 0xFFE0), so a firmware variant may not expose
+    // it. Consent alone unlocks the stream, so a missing 0xFFE2 must not abort.
+    it('consents without throwing when the vendor write char is absent', async () => {
+      const a = makeAdapter();
+      const ctx = makeCtx({ availableChars: new Set([CHR_UCP]) });
+      await expect(a.onConnected(ctx)).resolves.toBeUndefined();
+      const writtenChars = (ctx.write as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]);
+      expect(writtenChars).toContain(CHR_UCP);
+      expect(writtenChars).not.toContain(CHR_VENDOR_WRITE);
+    });
   });
 
   describe('parseCharNotification()', () => {

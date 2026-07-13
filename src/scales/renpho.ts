@@ -141,18 +141,22 @@ export class RenphoScaleAdapter
     this.cachedWeight = 0;
     this.cachedImpedance = 0;
 
-    const required = [CHR_UCP, CHR_VENDOR_WRITE];
-    const missing = required.filter((u) => !ctx.availableChars.has(u));
-    if (missing.length > 0) {
+    // Consent on the SIG User Control Point is what unlocks the stream, so it is
+    // the only hard requirement. The vendor 0xFFE2 service is not advertised (the
+    // matcher rejects devices that advertise 0xFFE0), so a firmware variant may
+    // not expose it; guard its writes rather than hard-requiring it (#267 review).
+    if (!ctx.availableChars.has(CHR_UCP)) {
       throw new Error(
-        `Renpho ES-WBE28: required characteristics not discovered (${missing.join(', ')}). ` +
+        `Renpho ES-WBE28: User Control Point (${CHR_UCP}) not discovered. ` +
           'Likely a transient GATT discovery race. Try again.',
       );
     }
 
-    // 1. Vendor handshake — three opaque config writes to 0xFFE2.
-    for (const cmd of HANDSHAKE) {
-      await ctx.write(CHR_VENDOR_WRITE, cmd, true);
+    // 1. Vendor handshake — three opaque config writes to 0xFFE2, when present.
+    if (ctx.availableChars.has(CHR_VENDOR_WRITE)) {
+      for (const cmd of HANDSHAKE) {
+        await ctx.write(CHR_VENDOR_WRITE, cmd, true);
+      }
     }
 
     // 2. User Control Point consent (opcode, user index, code LE).

@@ -13,6 +13,8 @@ import type { MatchDescriptor } from './match-descriptor.js';
 const SVC_UUID = uuid16(0xfff0);
 const CHR_NOTIFY = uuid16(0xfff1);
 const CHR_WRITE = uuid16(0xfff2);
+/** 1byone/Eufy write char, present on that family, never on a real Inlife. */
+const CHR_ONEBYONE = uuid16(0xfff4);
 
 const KNOWN_NAMES = ['000fatscale01', '000fatscale02', '042fatscale01'];
 
@@ -55,7 +57,10 @@ export class InlifeScaleAdapter implements ScaleAdapterCore, GattWiring {
       // 1byone/Eufy family, so require Inlife's own write characteristic
       // 0xFFF2 rather than the bare service UUID. Prevents the #177 collision
       // where a nameless T9146 (0xFFF1 + 0xFFF4, no 0xFFF2) fell to Inlife.
-      return chars.includes(CHR_WRITE);
+      // Also reject any device carrying the 1byone/Eufy write char 0xFFF4:
+      // a real Inlife never exposes it, and some Eufy variants (T9147, #251)
+      // expose fff2 AND fff4, which would otherwise still hit Inlife here.
+      return chars.includes(CHR_WRITE) && !chars.includes(CHR_ONEBYONE);
     }
 
     // Pre-connect (no characteristics yet): keep the legacy advertised-service

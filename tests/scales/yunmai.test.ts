@@ -140,11 +140,34 @@ describe('YunmaiScaleAdapter', () => {
       expect(adapter.isComplete({ weight: 0, impedance: 0 })).toBe(false);
     });
 
-    it('Mini variant: requires impedance > 0', () => {
+    it('Mini variant: complete on weight (impedance preferred via hold, not required)', () => {
       const adapter = makeAdapter();
       adapter.matches(mockPeripheral('Yunmai ISM', []));
-      expect(adapter.isComplete({ weight: 80, impedance: 0 })).toBe(false);
+      // #257: a weight-only final frame is complete so a unit that never reports
+      // impedance resolves weight-only instead of hanging until the read timeout.
+      expect(adapter.isComplete({ weight: 80, impedance: 0 })).toBe(true);
       expect(adapter.isComplete({ weight: 80, impedance: 500 })).toBe(true);
+    });
+  });
+
+  describe('completion hold (#257)', () => {
+    it('Mini/SE variant arms a hold window so impedance can arrive', () => {
+      const adapter = makeAdapter();
+      adapter.matches(mockPeripheral('Yunmai ISSE', []));
+      expect(adapter.completionHoldMs).toBeGreaterThan(0);
+    });
+
+    it('Standard variant sets no hold (resolves immediately)', () => {
+      const adapter = makeAdapter();
+      adapter.matches(mockPeripheral('Yunmai Standard', []));
+      expect(adapter.completionHoldMs).toBeUndefined();
+    });
+
+    it('isFinal resolves immediately once impedance is present', () => {
+      const adapter = makeAdapter();
+      adapter.matches(mockPeripheral('Yunmai ISSE', []));
+      expect(adapter.isFinal({ weight: 80, impedance: 500 })).toBe(true);
+      expect(adapter.isFinal({ weight: 80, impedance: 0 })).toBe(false);
     });
   });
 

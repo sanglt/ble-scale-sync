@@ -31,7 +31,7 @@ The badge above uses [My Home Assistant](https://www.home-assistant.io/integrati
    :::
 
 ::: tip
-The add-on requires `host_network`, `host_dbus`, and the `NET_ADMIN` / `NET_RAW` capabilities to access the host Bluetooth adapter through BlueZ. The Supervisor grants these automatically.
+The add-on requires `host_network`, `host_dbus`, and the `NET_ADMIN` / `NET_RAW` capabilities to access the host Bluetooth adapter through BlueZ. The Supervisor grants these automatically. The add-on also declares `apparmor: false`, because the Supervisor's default AppArmor profile blocks the D-Bus handshake that BlueZ needs. See [#271](https://github.com/KristianP26/ble-scale-sync/issues/271).
 :::
 
 ## Quick start
@@ -174,8 +174,11 @@ User-supplied files live under `/share/ble-scale-sync/`:
    ```bash
    docker run --rm -it --network host --cap-add NET_ADMIN --cap-add NET_RAW \
      --group-add 112 -v /var/run/dbus:/var/run/dbus:ro \
+     --security-opt apparmor=unconfined \
      ghcr.io/kristianp26/ble-scale-sync:latest scan
    ```
+
+   On hosts whose Docker applies a restrictive default AppArmor policy, dropping `--security-opt apparmor=unconfined` makes this command exit with `DBusError` and `AccessDenied`. See [Troubleshooting](/troubleshooting#docker-issues).
 
 3. If the scale is visible, paste its MAC into the **Scale MAC address** field.
 4. If multiple Bluetooth adapters are attached, set **BLE adapter** to the one facing the scale (`hci1`, etc.).

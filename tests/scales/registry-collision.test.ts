@@ -47,6 +47,9 @@ const FIXTURES: Record<string, BleDeviceInfo> = {
   'Exingtech Y1': { localName: 'vscale', serviceUuids: [] },
   'Excelvan CF369': { localName: 'electronic scale', serviceUuids: [] },
   Hesley: { localName: 'yunchen', serviceUuids: [] },
+  // #270: a Koogeek advertises the bare 0xFFF0 service, so its name must beat
+  // Inlife's pre-connect service fallback.
+  'Koogeek-S1': { localName: 'Koogeek-S1', serviceUuids: [uuid16(0xfff0)] },
   // #177: real Inlife resolves by its exact known name.
   Inlife: { localName: '000fatscale01', serviceUuids: [uuid16(0xfff0)] },
   Digoo: { localName: 'mengii', serviceUuids: [] },
@@ -60,6 +63,7 @@ const FIXTURES: Record<string, BleDeviceInfo> = {
   '1byone Scale (new)': { localName: '1byone scale', serviceUuids: [] },
   'Active Era BS-06': { localName: 'AE BS-06', serviceUuids: [] },
   'Robi S9': { localName: 'Robi S9', serviceUuids: [] },
+  Hutbit: { localName: 'Hutbit Scale', serviceUuids: ['ffb0'] },
   'MGB (Swan/Icomon/YG)': { localName: 'icomon', serviceUuids: [] },
   'Hoffen BS-8107': { localName: 'hoffen bs-8107', serviceUuids: [] },
   // Generic fallback: a non-excluded name + bare Weight Scale Service (0x181D).

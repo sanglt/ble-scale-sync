@@ -55,6 +55,18 @@ describe('InlifeScaleAdapter', () => {
       ]);
       expect(adapter.matches(info)).toBe(false);
     });
+
+    it('rejects a device exposing both 0xFFF2 and the 1byone 0xFFF4 char (#251)', () => {
+      const adapter = makeAdapter();
+      // Some Eufy variants (T9147) expose fff2 AND fff4; the fff4 presence
+      // means it is not a real Inlife, so it must fall to 1byone (Eufy).
+      const info = mockPeripheral('', [uuid16(0xfff0)], undefined, [
+        uuid16(0xfff1),
+        uuid16(0xfff2),
+        uuid16(0xfff4),
+      ]);
+      expect(adapter.matches(info)).toBe(false);
+    });
   });
 
   describe('parseNotification()', () => {

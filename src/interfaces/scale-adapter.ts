@@ -1,4 +1,5 @@
 import type { MatchDescriptor } from '../scales/match-descriptor.js';
+import type { WeightUnit } from '../config/schema.js';
 export type { MatchDescriptor };
 
 export type Gender = 'male' | 'female';
@@ -129,6 +130,13 @@ export interface ConnectionContext {
 export interface AdapterRuntimeConfig {
   /** MiBeacon bind key (32 hex chars) for broadcast-encrypted scales (Xiaomi S800). */
   bindKey?: string;
+  /**
+   * Configured display unit (`scale.weight_unit`). Adapters whose protocol tells
+   * the scale which unit to show (e.g. the QN 0x13 config command) honour this so
+   * a read does not flip the scale's display (#269). Optional and ignored by
+   * adapters that do not write a unit.
+   */
+  weightUnit?: WeightUnit;
 }
 
 /**
@@ -282,6 +290,15 @@ export interface AckProtocol {
    * characteristic after each notification. Return null to write nothing.
    */
   buildAck(data: Buffer): Buffer | number[] | null;
+
+  /**
+   * Whether the ACK is written with a response. Defaults to true, which keeps
+   * the Beurer/Sanitas behaviour. Vendor OEM write characteristics in the
+   * 0xFFF0 and 0xFFB0 families are often write-without-response only, and there
+   * a with-response write is rejected by BlueZ, so the ACK never lands and the
+   * scale never starts streaming. Those adapters set this false.
+   */
+  readonly ackWithResponse?: boolean;
 }
 
 /**

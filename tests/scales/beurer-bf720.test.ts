@@ -42,8 +42,22 @@ describe('BeurerBf720Adapter', () => {
   });
 
   describe('matches()', () => {
-    it.each(['BF720', 'beurer bf105', 'My BF720 Scale'])('matches name "%s"', (name) => {
+    it.each(['BF720', 'beurer bf105', 'My BF720 Scale', 'BF500'])('matches name "%s"', (name) => {
       expect(makeAdapter().matches(mockPeripheral(name))).toBe(true);
+    });
+
+    // #83: BF500 speaks the same SIG consent+bond protocol; it must route here
+    // (priority 220) rather than to Standard GATT (priority 0), which sends a
+    // code-0 consent on an unbonded link and reads nothing. Also accept the
+    // short-form advertised service UUID via the company-id path.
+    it('matches BF500 by name and by short-form 0x181d + Beurer company id (#83)', () => {
+      expect(makeAdapter().matches(mockPeripheral('BF500'))).toBe(true);
+      const viaShortForm: BleDeviceInfo = {
+        localName: '',
+        serviceUuids: ['181d'],
+        manufacturerData: { id: 0x0611, data: Buffer.alloc(0) },
+      };
+      expect(makeAdapter().matches(viaShortForm)).toBe(true);
     });
 
     // #168 review: a bare Beurer company id 0x0611 is too weak on its own.

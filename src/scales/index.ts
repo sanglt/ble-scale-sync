@@ -16,11 +16,13 @@ import { EsCs20mAdapter } from './es-cs20m.js';
 import { ExingtechY1Adapter } from './exingtech-y1.js';
 import { ExcelvanCF369Adapter } from './excelvan-cf369.js';
 import { HesleyScaleAdapter } from './hesley.js';
+import { KoogeekS1Adapter } from './koogeek-s1.js';
 import { InlifeScaleAdapter } from './inlife.js';
 import { DigooScaleAdapter } from './digoo.js';
 import { OneByoneAdapter, OneByoneNewAdapter } from './one-byone.js';
 import { ActiveEraAdapter } from './active-era.js';
 import { RobiS9Adapter } from './robi-s9.js';
+import { HutbitAdapter } from './hutbit.js';
 import { MgbAdapter } from './mgb.js';
 import { HoffenAdapter } from './hoffen.js';
 import { SenssunAdapter } from './senssun.js';
@@ -57,6 +59,9 @@ export const adapters: ScaleAdapter[] = [
   new ExingtechY1Adapter(),
   new ExcelvanCF369Adapter(),
   new HesleyScaleAdapter(),
+  // Koogeek-S1 outranks Inlife because a Koogeek advertises the bare 0xFFF0
+  // service, which Inlife's pre-connect fallback would otherwise claim (#270).
+  new KoogeekS1Adapter(),
   new InlifeScaleAdapter(),
   new DigooScaleAdapter(),
   new OneByoneAdapter(),
@@ -66,6 +71,9 @@ export const adapters: ScaleAdapter[] = [
   // Robi speaks a different protocol and is matched by name or its FFB3 result
   // characteristic, so it must win before the generic MGB FFB0 fallback (#228).
   new RobiS9Adapter(),
+  // Hutbit (Lefu/Fitdays FFB0 8-byte AC02 protocol): matches by its "Hutbit"
+  // name; sits before the generic MGB FFB0 fallback (#254).
+  new HutbitAdapter(),
   new MgbAdapter(),
   new HoffenAdapter(),
   // Generic standard GATT adapter last — matches by service UUID / brand names

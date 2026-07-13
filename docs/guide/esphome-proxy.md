@@ -9,7 +9,17 @@ head:
 
 # ESPHome Bluetooth Proxy
 
-If you already run an [ESPHome Bluetooth proxy](https://esphome.io/components/bluetooth_proxy.html) mesh for Home Assistant, BLE Scale Sync can reuse it as its BLE radio. No dedicated ESP32 with custom firmware, no MQTT broker plumbing: the server connects to the ESPHome Native API on port 6053 and subscribes to BLE advertisements directly.
+An [ESPHome Bluetooth proxy](https://esphome.io/components/bluetooth_proxy.html) can act as BLE Scale Sync's BLE radio. No dedicated ESP32 with custom firmware, no MQTT broker plumbing: the server connects to the ESPHome Native API on port 6053 and subscribes to BLE advertisements directly.
+
+::: danger The proxy node must not be adopted by Home Assistant
+A proxy node serves its BLE advertisement subscription to **one API client at a time**. If Home Assistant has already adopted the node, it holds that subscription, and BLE Scale Sync connects successfully but never receives a single advertisement, so the scale is never seen. The ESPHome device log shows:
+
+```
+Only one API subscription is allowed at a time
+```
+
+Use a **dedicated ESPHome bluetooth-proxy node that you flash but do not add to Home Assistant**, and point BLE Scale Sync at that node. Your existing Home Assistant proxy mesh keeps working untouched. See [#232](https://github.com/KristianP26/ble-scale-sync/issues/232), [#248](https://github.com/KristianP26/ble-scale-sync/issues/248) and [#252](https://github.com/KristianP26/ble-scale-sync/issues/252).
+:::
 
 ::: tip Broadcast and GATT supported
 The ESPHome proxy transport handles both broadcast scales (parsed straight from advertisements) and GATT scales (connected on demand through the proxy, then read and disconnected). Multiple proxies can be configured for a mesh: a GATT connect is routed to the proxy that most recently saw the scale, with the others as fallbacks. Implemented in [issue #116](https://github.com/KristianP26/ble-scale-sync/issues/116).
@@ -29,11 +39,13 @@ The ESPHome proxy sees the scale's BLE advertisement, wraps it in a Native API `
 ## Requirements
 
 - A running ESPHome device with `bluetooth_proxy:` enabled, on ESPHome **2023.5 or newer** (older firmware used a different BLE event layout that is not handled by this transport)
+- The proxy node **must not be adopted by Home Assistant** (see the warning above); dedicate one node to BLE Scale Sync
+- The proxy node should have **no `remote_receiver:` / RF or IR receiver** configured (see the IR/RF note below)
 - Network reachability between BLE Scale Sync and the ESPHome device on TCP port 6053
 - Either the ESPHome API encryption key (recommended) or the legacy API password, matching the device's `api:` config
 
 ::: tip When to pick this vs the ESP32 MQTT proxy
-Both transports support broadcast and GATT scales. If you already have ESPHome proxies in your home, start here: zero new hardware. The [ESP32 MQTT proxy](/guide/esp32-proxy) additionally offers a display/beep feedback UI.
+Both transports support broadcast and GATT scales. Pick this one if you are comfortable flashing a spare ESP32 with stock ESPHome and want no custom firmware. The [ESP32 MQTT proxy](/guide/esp32-proxy) additionally offers a display/beep feedback UI. Either way the node is dedicated to BLE Scale Sync.
 :::
 
 ## Configuring BLE Scale Sync
@@ -95,6 +107,35 @@ volumes:
 ```
 
 ## Troubleshooting
+
+### Connects fine but never sees the scale ("Only one API subscription is allowed at a time")
+
+The proxy is already adopted by Home Assistant, which holds the node's single BLE
+advertisement subscription. BLE Scale Sync connects to the Native API and logs
+`ESPHome proxy connected` plus `ReadingWatcher started`, but no advertisement ever
+arrives, so no scale is matched.
+
+Flash a spare ESP32 as a bluetooth proxy and **do not add it to Home Assistant**,
+then point `esphome_proxy.host` at it. Board or RAM is not the cause: this happens
+on an Atom Echo and on an ESP32-S3 alike.
+
+### Proxy connection drops every few minutes (IR or RF receiver on the node)
+
+If the node also has a `remote_receiver:` (IR/RF) component, every received IR or RF
+signal, including stray ambient IR, makes ESPHome emit an API message that the
+Native API client library does not recognise. Older builds of BLE Scale Sync tore the
+proxy connection down on each one, and any weigh-in during the reconnect window was
+lost. You would see repeating pairs of:
+
+```
+ESPHome proxy <host>:6053 error: Failed find or parsed message type for Id: 137
+ESPHome proxy <host>:6053 error: Cannot set properties of undefined (setting 'length')
+```
+
+Unknown message ids are now ignored and the connection is kept alive, so this is
+handled. Even so, keep the IR/RF receiver on a different node than the one serving
+BLE Scale Sync: a dedicated bluetooth-proxy node should run `bluetooth_proxy:` and
+little else. Reported in [#252](https://github.com/KristianP26/ble-scale-sync/issues/252).
 
 ### Timed out connecting to ESPHome proxy
 

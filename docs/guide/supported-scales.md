@@ -1,15 +1,15 @@
 ---
 title: Supported Scales
-description: All 25 BLE smart scale brands supported by BLE Scale Sync.
+description: All 26 BLE smart scale brands supported by BLE Scale Sync.
 head:
   - - meta
     - name: keywords
-      content: xiaomi mi scale, renpho scale bluetooth, eufy smart scale, yunmai scale, beurer bf scale, sanitas scale, medisana bs scale, silvercrest scale, 1byone scale, etekcity scale, inevifit scale, arboleaf scale, lepulse scale, fitdays scale, senssun scale, supported ble scales
+      content: koogeek scale, xiaomi mi scale, renpho scale bluetooth, eufy smart scale, yunmai scale, beurer bf scale, sanitas scale, medisana bs scale, silvercrest scale, 1byone scale, etekcity scale, inevifit scale, arboleaf scale, lepulse scale, fitdays scale, senssun scale, supported ble scales
 ---
 
 # Supported Scales
 
-BLE Scale Sync ships **26 protocol adapters** out of the box, covering Xiaomi, Renpho (incl. FITINDEX, Sencor, QN-Scale), Eufy (incl. P2 Pro T9149), Yunmai, Beurer, Sanitas, Medisana, and more, plus a generic Bluetooth SIG adapter that works with any spec-compliant BCS/WSS scale. Each adapter typically supports several models or rebrands sold under different names, so the real device coverage is much wider than the adapter count. All adapters provide weight + impedance for full [body composition](/body-composition) calculation.
+BLE Scale Sync ships **27 protocol adapters** out of the box, covering Xiaomi, Renpho (incl. FITINDEX, Sencor, QN-Scale), Eufy (incl. P2 Pro T9149), Yunmai, Beurer, Sanitas, Medisana, and more, plus a generic Bluetooth SIG adapter that works with any spec-compliant BCS/WSS scale. Each adapter typically supports several models or rebrands sold under different names, so the real device coverage is much wider than the adapter count. All adapters provide weight + impedance for full [body composition](/body-composition) calculation.
 
 ## Scale List
 
@@ -38,6 +38,7 @@ BLE Scale Sync ships **26 protocol adapters** out of the box, covering Xiaomi, R
 | **Hoffen** BS-8107                                                    |                                                                                                                                                                                                                                                   |
 | **Hesley** (YunChen)                                                  |                                                                                                                                                                                                                                                   |
 | **Inlife** (FatScale)                                                 |                                                                                                                                                                                                                                                   |
+| **Koogeek** S1 | Vendor FFF0 protocol. Body composition is estimated from weight and impedance, because the vendor computed it in a cloud service that no longer exists. See Known Limitations |
 | **Exingtech** Y1 (vscale)                                             |                                                                                                                                                                                                                                                   |
 | Any **standard BT SIG** scale (BCS/WSS)                               | Catch-all for standard-compliant scales                                                                                                                                                                                                           |
 
@@ -69,6 +70,7 @@ We recommend setting `scale_mac` in `config.yaml`. It prevents the app from acci
 | **Soehnle**, **Sanitas** SBF72/73, **Beurer** BF915   | Create user slot 1 in the manufacturer's phone app first                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | **Standard GATT**                                     | Select user 1 on the scale before measuring                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | **Senssun** Model B                                   | Not supported yet (only Model A with service 0xFFF0)                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| **Koogeek** S1 | The measurement protocol is implemented and verified, but this hardware's GATT connect and service discovery are unreliable on BlueZ and on ESP32 NimBLE, and succeed only occasionally on macOS CoreBluetooth. That is a trait of the device rather than of the adapter. Retry, or use whichever transport works best for your unit |
 | **Renpho ES-CS20M / Elis 1** (some hardware variants) | Some units use broadcast-only firmware that does not allow GATT connections. The same model name can ship with different internal hardware. If your ES-CS20M or Elis 1 is broadcast-only, ble-scale-sync reads weight directly from BLE advertisements. Body composition is estimated from BMI (Deurenberg formula) instead of impedance, since impedance is not available in broadcast mode. Run `npm run diagnose` to check whether your unit is connectable or broadcast-only. |
 
 ## Don't See Your Scale?

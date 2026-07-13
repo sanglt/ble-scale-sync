@@ -429,26 +429,32 @@ export class ReadingWatcher implements Watcher {
     try {
       client = await getOrCreatePersistentClient(this.config);
 
-      // Match the address to an adapter
+      // Match the address to an adapter. The ESP32 already discovered the GATT
+      // characteristics, so populate them and resolve char-aware FIRST, exactly
+      // like the node-ble post-discovery re-resolution (#177). This lets a
+      // structural matcher win over a generic-notify-char collision: e.g. a
+      // QN-family Elis 1 exposes ae01/ae02 (a positive QN signature) plus the
+      // generic fff1/fff2 pair; without the structural pass the higher-priority
+      // Eufy P2 adapter stole it via its fff2 notify char and then failed on the
+      // missing fff4 (#258).
       const info = toBleDeviceInfo({ address: data.address, name: '', rssi: 0, services: [] });
-      // For autonomous connect, we match by scanning the chars for known notify UUIDs
-      // Order by descriptor priority (mirrors resolveAdapter) then apply the
-      // per-adapter OR of matches() and a charNotify match. A stable sort keeps
-      // the input order for ties, so behavior matches the prior array-order find.
-      const adapter = [...this.adapters]
-        .sort((a, b) => (b.match?.priority ?? 0) - (a.match?.priority ?? 0))
-        .find((a) => {
-          // Try matching by device info first
-          if (a.matches(info)) return true;
-          // Also match by charNotifyUuid: the ESP32 already connected, so the
-          // adapter may match only by its GATT characteristic.
-          // Normalize both sides (case + 16-bit vs 128-bit) to avoid silent mismatches.
-          if (a.charNotifyUuid) {
-            const normalized = normalizeUuid(a.charNotifyUuid);
-            return data.chars.some((c) => normalizeUuid(c.uuid) === normalized);
-          }
-          return false;
-        });
+      info.characteristicUuids = data.chars.map((c) => c.uuid.toLowerCase());
+      let adapter = resolveAdapter(info, this.adapters);
+      if (!adapter) {
+        // No structural match: fall back to a priority-ordered notify-char scan
+        // so name/notify-only adapters still resolve when nothing matches by
+        // descriptor. A stable sort keeps input order for ties.
+        adapter = [...this.adapters]
+          .sort((a, b) => (b.match?.priority ?? 0) - (a.match?.priority ?? 0))
+          .find((a) => {
+            if (a.charNotifyUuid) {
+              // Normalize both sides (case + 16-bit vs 128-bit) to avoid silent mismatches.
+              const normalized = normalizeUuid(a.charNotifyUuid);
+              return data.chars.some((c) => normalizeUuid(c.uuid) === normalized);
+            }
+            return false;
+          });
+      }
 
       if (!adapter) {
         bleLog.warn(

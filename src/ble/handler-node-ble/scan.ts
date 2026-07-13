@@ -248,7 +248,16 @@ export async function scanAndReadRaw(opts: ScanOptions): Promise<RawReading> {
       // the first service-only match. BlueZ can export characteristics late
       // ([bluez/bluez#1489]), so retry the enumeration within the existing
       // discovery budget until an adapter is recognized. #177
-      const gatt = await device.gatt();
+      // Wrap device.gatt() in the same timeout as the standard path below: if
+      // the peripheral drops the connection mid-discovery, node-ble waits on the
+      // D-Bus ServicesResolved property forever, freezing the event loop after
+      // connect but before the scan cycle fails, so the consecutive-failure
+      // watchdog never trips (#273).
+      const gatt = await withTimeout(
+        device.gatt(),
+        GATT_DISCOVERY_TIMEOUT_MS,
+        'GATT server acquisition timed out',
+      );
       const serviceUuids = await gatt.services();
       bleLog.debug(`Services: [${serviceUuids.join(', ')}]`);
 

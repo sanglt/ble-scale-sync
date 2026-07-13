@@ -184,13 +184,15 @@ async function main(): Promise<void> {
   }
   log.info(`Adapters: ${adapters.map((a) => a.name).join(', ')}\n`);
 
-  // Inject per-device broadcast secrets (e.g. the Xiaomi S800 MiBeacon bind key)
-  // into adapters that decrypt them. Optional + no-op for adapters without
-  // configure(). Re-applied on config reload below so a hot-edited key takes effect.
-  const applyAdapterBindKey = (bindKey: string | undefined): void => {
-    for (const a of adapters) a.configure?.({ bindKey });
+  // Inject runtime config into adapters that read it: the Xiaomi S800 MiBeacon
+  // bind key, and the configured display unit that the QN 0x13 command echoes to
+  // the scale (#269). Optional + no-op for adapters without configure().
+  // Re-applied on config reload below so a hot-edited key or unit takes effect.
+  const applyAdapterConfig = (bindKey: string | undefined): void => {
+    const weightUnit = ctx.config.scale.weight_unit;
+    for (const a of adapters) a.configure?.({ bindKey, weightUnit });
   };
-  applyAdapterBindKey(ctx.config.ble?.bind_key ?? undefined);
+  applyAdapterConfig(ctx.config.ble?.bind_key ?? undefined);
 
   let singleUserExporters: Exporter[] | undefined;
   if (!ctx.dryRun) {
@@ -247,7 +249,7 @@ async function main(): Promise<void> {
 
   const onReload = async (): Promise<void> => {
     await reloadAppConfig(ctx, displaySnapshotRef);
-    applyAdapterBindKey(ctx.config.ble?.bind_key ?? undefined);
+    applyAdapterConfig(ctx.config.ble?.bind_key ?? undefined);
     if (ctx.config.users.length === 1) {
       singleUserExporters = ctx.dryRun ? undefined : buildSingleUserExporters(ctx);
     }

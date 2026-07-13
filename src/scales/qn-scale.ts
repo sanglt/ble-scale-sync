@@ -8,10 +8,12 @@ import type {
   ScaleReading,
   UserProfile,
   BodyComposition,
+  AdapterRuntimeConfig,
 } from '../interfaces/scale-adapter.js';
 import { uuid16 } from './body-comp-helpers.js';
 import { bleLog } from '../ble/types.js';
 import type { MatchDescriptor } from './match-descriptor.js';
+import type { WeightUnit } from '../config/schema.js';
 
 /** Format bytes as hex string for debug logging. */
 const hex = (data: number[] | Buffer): string =>
@@ -143,6 +145,13 @@ export class QnScaleAdapter implements ScaleAdapterCore, GattWiring, BroadcastSo
   /** Protocol type byte captured from the scale's 0x12 frame, echoed in config commands. */
   private seenProtocolType = 0x00;
 
+  /**
+   * Configured display unit. The 0x13 config command tells the scale which unit
+   * to show, so hardcoding kg flipped a user's lbs display on every read (#269).
+   * Injected via configure() from scale.weight_unit; defaults to kg.
+   */
+  private displayUnit: WeightUnit = 'kg';
+
   /** Whether the AE00 service is available (newer firmware). */
   private hasAe00 = false;
 
@@ -182,6 +191,16 @@ export class QnScaleAdapter implements ScaleAdapterCore, GattWiring, BroadcastSo
 
   /** Timer handle for the pending stored-data re-query. */
   private storedRetryTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** Receive the configured display unit from the composition root (#269). */
+  configure(opts: AdapterRuntimeConfig): void {
+    if (opts.weightUnit) this.displayUnit = opts.weightUnit;
+  }
+
+  /** 0x13 config unit flag: 0x01 kg, 0x02 lb (openScale QNHandler). */
+  private unitFlag(): number {
+    return this.displayUnit === 'lbs' ? 0x02 : 0x01;
+  }
 
   /** Write to FFF2 (write char), fall back to FFE3 (Type 1). */
   private async writeCmd(data: number[]): Promise<void> {
@@ -257,10 +276,12 @@ export class QnScaleAdapter implements ScaleAdapterCore, GattWiring, BroadcastSo
       // Older firmware: send legacy unlock variants on FFF2.
       // These work with Renpho, Sencor, and generic QN-Scale devices
       // that don't use the notification-driven handshake.
-      const unlocks = [
-        [0x13, 0x09, 0x00, 0x01, 0x01, 0x02],
-        [0x13, 0x09, 0x00, 0x01, 0x10, 0x00, 0x00, 0x00, 0x2d],
-      ];
+      // The second unlock is the 0x10 config variant whose byte[3] is the unit
+      // flag; honour the configured unit and recompute its checksum (#269). The
+      // first unlock is a different 0x01 subcommand and is left as-is.
+      const config = [0x13, 0x09, 0x00, this.unitFlag(), 0x10, 0x00, 0x00, 0x00, 0x00];
+      config[8] = config.reduce((a, b) => a + b, 0) & 0xff;
+      const unlocks = [[0x13, 0x09, 0x00, 0x01, 0x01, 0x02], config];
       for (const cmd of unlocks) {
         await this.writeCmd(cmd);
       }
@@ -604,9 +625,10 @@ export class QnScaleAdapter implements ScaleAdapterCore, GattWiring, BroadcastSo
     await wait(200);
 
     // Step 3: 0x13 config
-    // byte[3] = unit flag: 0x01 (kg) or 0x02 (lb) per openScale QNHandler.
+    // byte[3] = unit flag: 0x01 (kg) or 0x02 (lb) per openScale QNHandler. Honour
+    // the configured unit so a read does not flip the scale's display (#269).
     // The Renpho app uses 0x08 which also works but switches the scale display to lb.
-    const cmd = [0x13, 0x09, this.seenProtocolType, 0x01, 0x10, 0x00, 0x00, 0x00, 0x00];
+    const cmd = [0x13, 0x09, this.seenProtocolType, this.unitFlag(), 0x10, 0x00, 0x00, 0x00, 0x00];
     cmd[8] = cmd.reduce((a, b) => a + b, 0) & 0xff;
     await this.writeCmd(cmd);
   }

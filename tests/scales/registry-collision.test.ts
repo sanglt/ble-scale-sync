@@ -44,6 +44,9 @@ const FIXTURES: Record<string, BleDeviceInfo> = {
   'Medisana BS44x': { localName: '013197', serviceUuids: [] },
   Trisa: { localName: '01257B1234', serviceUuids: [] },
   'ES-CS20M': { localName: 'es-cs20m', serviceUuids: [] },
+  // #117/#265: routes by exact name; outranks ES-CS20M (priority 235 > 130) even
+  // though a real unit also advertises service 0x1A10 (not claimed here).
+  'Renpho R-MSC04': { localName: 'R-MSC04', serviceUuids: [] },
   'Exingtech Y1': { localName: 'vscale', serviceUuids: [] },
   'Excelvan CF369': { localName: 'electronic scale', serviceUuids: [] },
   Hesley: { localName: 'yunchen', serviceUuids: [] },

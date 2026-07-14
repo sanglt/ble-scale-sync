@@ -2,6 +2,7 @@ import type { ScaleAdapter } from '../interfaces/scale-adapter.js';
 import { QnScaleAdapter } from './qn-scale.js';
 import { RenphoScaleAdapter } from './renpho.js';
 import { RenphoEs26bbAdapter } from './renpho-es26bb.js';
+import { RenphoMsc04Adapter } from './renpho-msc04.js';
 import { MiScale2Adapter } from './mi-scale-2.js';
 import { XiaomiS800Adapter } from './xiaomi-s800.js';
 import { BeurerBf720Adapter } from './beurer-bf720.js';
@@ -40,6 +41,11 @@ export const adapters: ScaleAdapter[] = [
   new SenssunAdapter(),
   new QnScaleAdapter(),
   new RenphoScaleAdapter(),
+  // Renpho R-MSC04 (#117/#265): 55AA-framed weight on service 0x1A10. Matched by
+  // its exact advertised name only. It outranks ES-CS20M (which claims 0x1A10)
+  // so a named R-MSC04 lands here, while a nameless 0x1A10 device still goes to
+  // ES-CS20M.
+  new RenphoMsc04Adapter(),
   new RenphoEs26bbAdapter(),
   // Beurer SIG scales (BF720/BF105) advertise/expose Body Composition 0x181B
   // and would otherwise be grabbed by the Mi Scale 2 adapter, so match them

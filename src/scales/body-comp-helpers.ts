@@ -64,8 +64,22 @@ export function buildPayload(
 
   const boneMass = comp.bone ?? lbm * 0.042;
 
-  const muscleMass =
-    comp.muscle != null ? (comp.muscle / 100) * weight : lbm * (p.isAthlete ? 0.6 : 0.54);
+  // Skeletal muscle estimate: roughly the portion of lean mass that is skeletal
+  // muscle. This is NOT what the muscleMass field means (see below), but the
+  // physique rating's thresholds are calibrated against it, so it is kept as
+  // that heuristic's input rather than silently re-scaled.
+  const skeletalMuscleEstimate = lbm * (p.isAthlete ? 0.6 : 0.54);
+
+  // Muscle mass is fat-free mass minus bone, which is what both the vendor apps
+  // and Garmin Connect mean by the term. This used to fall back to the skeletal
+  // muscle estimate above, which under-reports by roughly a third of body weight
+  // on every impedance-only scale (#253).
+  //
+  // Verified against two Renpho app sessions posted in #253, where the app's own
+  // numbers are internally consistent with this definition and not with the old
+  // one: 65.50 kg fat-free mass - 3.28 kg bone = 62.22 vs the app's 62.20 muscle
+  // mass, and 65.00 - 3.25 = 61.75 vs the app's 61.80.
+  const muscleMass = comp.muscle != null ? (comp.muscle / 100) * weight : lbm - boneMass;
 
   let visceralFat: number;
   if (comp.visceralFat != null) {
@@ -76,7 +90,11 @@ export function buildPayload(
     visceralFat = 1;
   }
 
-  const physiqueRating = computePhysiqueRating(bodyFatPercent, muscleMass, weight);
+  const physiqueRating = computePhysiqueRating(
+    bodyFatPercent,
+    comp.muscle != null ? (comp.muscle / 100) * weight : skeletalMuscleEstimate,
+    weight,
+  );
 
   const baseBmr = 10 * weight + 6.25 * p.height - 5 * p.age;
   let bmr = baseBmr + (p.gender === 'male' ? 5 : -161);
@@ -110,11 +128,21 @@ export function estimateBodyFat(bmi: number, p: UserProfile): number {
   return Math.max(3, Math.min(bf, 60));
 }
 
+/**
+ * 1 to 9 physique rating.
+ *
+ * The `skeletalMuscleMass` argument is the SKELETAL muscle estimate, not the
+ * `muscleMass` field that buildPayload() exports. The thresholds below (0.38 to
+ * 0.45 of body weight) are calibrated against that quantity; fat-free mass minus
+ * bone runs well above them for almost everyone, so passing it here would pin
+ * nearly every user to the top branch (#253).
+ */
 export function computePhysiqueRating(
   bodyFatPercent: number,
-  muscleMass: number,
+  skeletalMuscleMass: number,
   weight: number,
 ): number {
+  const muscleMass = skeletalMuscleMass;
   if (bodyFatPercent > 25) return muscleMass > weight * 0.4 ? 2 : 1;
   if (bodyFatPercent < 18) {
     if (muscleMass > weight * 0.45) return 9;

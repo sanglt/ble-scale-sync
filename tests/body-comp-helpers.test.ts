@@ -247,7 +247,11 @@ describe('buildPayload()', () => {
     const lbm = 80 * (1 - estimatedFat / 100);
     expect(p.waterPercent).toBe(r2(((lbm * 0.73) / 80) * 100));
     expect(p.boneMass).toBe(r2(lbm * 0.042));
-    expect(p.muscleMass).toBe(r2(lbm * 0.54));
+    // #253: muscle mass is fat-free mass minus bone, which is what the vendor
+    // apps and Garmin Connect mean by the term. It used to fall back to
+    // lbm * 0.54, a skeletal muscle estimate, which under-reported by roughly a
+    // third of body weight.
+    expect(p.muscleMass).toBe(r2(lbm - lbm * 0.042));
   });
 
   it('mixes provided and estimated values', () => {
@@ -260,7 +264,36 @@ describe('buildPayload()', () => {
     const lbm = 80 * (1 - 20 / 100); // = 64
     expect(p.waterPercent).toBe(r2(((lbm * 0.73) / 80) * 100));
     expect(p.boneMass).toBe(r2(lbm * 0.042));
-    expect(p.muscleMass).toBe(r2(lbm * 0.54));
+    expect(p.muscleMass).toBe(r2(lbm - lbm * 0.042)); // #253: fat-free mass minus bone
+  });
+
+  // #253: two Renpho app sessions posted by the reporter. The app's own numbers
+  // are internally consistent with "muscle mass = fat-free mass - bone" and not
+  // with the old skeletal-muscle fallback, so reproduce that relationship using
+  // the app's own fat and bone figures as inputs.
+  it.each([
+    { weight: 86.1, fat: 23.9, bone: 3.28, appMuscle: 62.2 },
+    { weight: 84.8, fat: 23.3, bone: 3.25, appMuscle: 61.8 },
+  ])(
+    'matches the Renpho app muscle mass for a $weight kg session (#253)',
+    ({ weight, fat, bone, appMuscle }) => {
+      const p = buildPayload(weight, 500, { fat, bone }, profile);
+      expect(p.muscleMass).toBeCloseTo(appMuscle, 1);
+    },
+  );
+
+  // The physique rating's thresholds are calibrated against the skeletal muscle
+  // estimate, not against fat-free mass minus bone. Feeding it the corrected
+  // muscle mass would push essentially everyone into the top branch, so the two
+  // must stay decoupled.
+  it('does not let the corrected muscle mass inflate the physique rating (#253)', () => {
+    // fat 17 % is chosen so the two bases disagree. lbm = 66.4, so the skeletal
+    // estimate is 0.54 * 66.4 = 35.86, just under the 0.45 * 80 = 36 threshold
+    // for a 9, giving an 8. The corrected muscleMass is 66.4 - bone = 63.6,
+    // far above it, so if the rating read that field it would be pinned at 9.
+    const p = buildPayload(80, 500, { fat: 17 }, profile);
+    expect(p.muscleMass).toBeGreaterThan(80 * 0.45);
+    expect(p.physiqueRating).toBe(8);
   });
 
   it('clamps visceral fat to [1, 59]', () => {

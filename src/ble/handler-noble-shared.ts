@@ -519,19 +519,32 @@ export function createNobleHandler({ noble, getState }: NobleHandlerDeps) {
           // Target-MAC mode: match adapter post-connect using full service list
           // and the discovered characteristics, so char-aware adapters (#177, #235)
           // can disambiguate devices that share a generic vendor service (fff0).
-          const serviceUuids = services.map((s) => normalizeUuid(s.uuid));
+          // Union of advertised and discovered services. Target-MAC mode skips
+          // the discovery-time match, so this is the ONLY adapter resolution for
+          // a configured scale_mac, and it must carry both kinds of evidence.
+          // A device record holding advertisement-scoped manufacturer data next
+          // to a GATT-only service list is a scope hybrid that exists on no
+          // other path, and adapters cannot tell the two apart: the Hutbit's
+          // d618 is advertised (AD type 0x03) and is not known to be a GATT
+          // primary service, so a signature check needing d618 would never fire
+          // here while the manufacturer data suggested it should (#278).
+          const discoveredUuids = services.map((s) => normalizeUuid(s.uuid));
+          const serviceUuids = [
+            ...new Set([
+              ...(peripheral.advertisement?.serviceUuids ?? []).map(normalizeUuid),
+              ...discoveredUuids,
+            ]),
+          ];
           const characteristicUuids = services.flatMap((s) =>
             (s.characteristics ?? []).map((c) => normalizeUuid(c.uuid)),
           );
           const name = peripheral.advertisement?.localName ?? '';
-          bleLog.debug(`Services: [${serviceUuids.join(', ')}]`);
+          bleLog.debug(`Services: [${discoveredUuids.join(', ')}]`);
 
-          // Manufacturer data matters here too: target-MAC mode skips the
-          // discovery-time match, so this is the ONLY adapter resolution for a
-          // configured scale_mac. Adapters that fingerprint the advertisement
-          // (Hutbit's Lefu OEM signature #278, Beurer 0x0611, Mi Scale, QN)
-          // silently lost that signal without it, so an OEM-rebranded unit fell
-          // through to a wrong adapter on Windows and macOS.
+          // Manufacturer data matters here too, for the same reason: adapters
+          // that fingerprint the advertisement (the Lefu OEM signature #278,
+          // Beurer 0x0611, Mi Scale, QN) silently lost that signal without it,
+          // so an OEM-rebranded unit fell through to a wrong adapter.
           const info: BleDeviceInfo = {
             localName: name,
             serviceUuids,

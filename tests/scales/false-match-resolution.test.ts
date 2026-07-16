@@ -36,13 +36,23 @@ describe('false-match resolution (#255 / #258 / #251)', () => {
   // stack, which used to hand it to QN Scale at priority 250 (#229: the reporter
   // saw it alternate between QN Scale and Standard GATT). The SIG User Control
   // Point now excludes it from QN's nameless fallback.
-  it('#229: nameless SIG consent scale with vendor fff0 does not resolve to QN Scale', () => {
+  // Documents the honest current outcome, not an aspiration. QN no longer
+  // claims it, but with no advertised name and no manufacturer data there is
+  // nothing left that identifies it as a Beurer, so it lands on Standard GATT.
+  // That still cannot read the scale (it sends a code-0 consent unbonded), so
+  // the BF788 depends on its name reaching matches(). Teaching this adapter a
+  // structural SIG-consent match is deliberately NOT done: at priority 220 it
+  // would claim every generic BCS/WSS scale exposing a User Data service and
+  // demand a consent PIN from users whose setups work today.
+  it('#229: nameless SIG consent scale with vendor fff0 is not claimed by QN Scale', () => {
     const info: BleDeviceInfo = {
       localName: '',
       serviceUuids: [uuid16(0x181b), uuid16(0x181d), uuid16(0x181c), uuid16(0xfff0)],
       characteristicUuids: [uuid16(0x2a9d), uuid16(0x2a9c), uuid16(0x2a9f), uuid16(0x2a9b)],
     };
-    expect(resolveAdapter(info, adapters)?.name).not.toBe('QN Scale');
+    const resolved = resolveAdapter(info, adapters);
+    expect(resolved?.name).not.toBe('QN Scale');
+    expect(resolved?.name).toBe('Standard GATT (BCS/WSS)');
   });
 
   it('#258: QN-family Elis 1 (ae01/ae02 + generic fff1/fff2) resolves to QN Scale, not Eufy P2', () => {

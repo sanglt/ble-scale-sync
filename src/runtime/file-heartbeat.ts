@@ -58,7 +58,7 @@ export function startFileHeartbeat(intervalMs: number = DEFAULT_INTERVAL_MS): vo
 /**
  * Stop the heartbeat. Idempotent.
  *
- * Load-bearing, not hygiene: the heartbeat starts before bootstrap, so if
+ * Load-bearing, not hygiene: the heartbeat starts at the top of main(), so if
  * main() throws without aborting (a failing healthcheck, an unreachable broker)
  * and some handle pins the event loop open, the process would otherwise sit
  * there reporting healthy forever. Stopping it lets the file go stale so the

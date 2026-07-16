@@ -126,6 +126,23 @@ describe('HutbitAdapter (#254)', () => {
       expect(resolveAdapter(robiLikeWithMfg, adapters)?.name).toBe('Robi S9');
     });
 
+    // The noble target-MAC path builds its device record from GATT-discovered
+    // services, where d618 (an advertised 16-bit UUID, AD type 0x03) need not
+    // appear at all. The handler therefore unions the advertised UUIDs in; this
+    // pins the resulting shape, since without the union the signature check
+    // could never fire there and the unit fell through to MGB, whose parser
+    // rejects every frame this family sends.
+    it('claims a target-MAC record whose advertised d618 is unioned with GATT services', () => {
+      const targetMac: BleDeviceInfo = {
+        localName: 'SWAN',
+        // d618 from the advertisement, ffb0 from both, plus GATT-only services.
+        serviceUuids: [uuid16(0xd618), uuid16(0xffb0), uuid16(0x1800), uuid16(0x180a)],
+        characteristicUuids: [uuid16(0xffb1), uuid16(0xffb2), uuid16(0xffb3)],
+        manufacturerData: { id: 0x02ac, data: Buffer.from('7eb893ecb30301', 'hex') },
+      };
+      expect(resolveAdapter(targetMac, adapters)?.name).toBe('Hutbit');
+    });
+
     // The Robi guard sits AFTER the robi-name check on purpose, so a correctly
     // named Robi is never stolen even if it carries the full fingerprint.
     it('a named Robi S9 carrying the full OEM fingerprint still resolves to Robi', () => {

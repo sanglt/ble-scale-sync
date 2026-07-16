@@ -106,6 +106,23 @@ describe('BeurerBf720Adapter', () => {
       expect(makeAdapter().matches(viaServiceData)).toBe(true);
     });
 
+    // The company-id branch is the NAMELESS fallback. A MAC-pinned Sanitas
+    // SBF72 reaches matches() post-connect with its name, its discovered
+    // services (every SIG scale exposes 0x181B, so the SIG gate is free there)
+    // and Beurer's shared company id. Without the name bow-out this adapter
+    // (priority 220) stole it from Sanitas SBF72/73 (170) and then hard-failed
+    // demanding a consent PIN the SBF72 does not use.
+    it('does not hijack a named Beurer sibling that shares the company id', () => {
+      const sbf72: BleDeviceInfo = {
+        localName: 'SBF72',
+        serviceUuids: [uuid16(0x181b), uuid16(0x181c)],
+        characteristicUuids: [uuid16(0x2a9c), uuid16(0x2a9f)],
+        manufacturerData: { id: 0x0611, data: Buffer.alloc(0) },
+      };
+      expect(makeAdapter().matches(sbf72)).toBe(false);
+      expect(resolveAdapter(sbf72)?.name).toBe('Sanitas SBF72/73');
+    });
+
     it('does not match unrelated name / other company id', () => {
       expect(makeAdapter().matches(mockPeripheral('Random Scale'))).toBe(false);
       const info: BleDeviceInfo = {
@@ -275,6 +292,51 @@ describe('BeurerBf720Adapter', () => {
         const a = makeAdapter();
         expect(a.parseCharNotification(CHR_WEIGHT, WEIGHT_FRAME)).toBeNull();
         expect(a.parseCharNotification(CHR_BODYCOMP, ZEROED_COMP)).toBeNull();
+      });
+    });
+
+    // computeMetrics() runs long after the session resolves, once per buffered
+    // frame, so it must use the composition each reading was BUILT from rather
+    // than whatever the cache holds at the end. Otherwise a trailing stub wipes
+    // the cache and the buffered history reading silently exports Deurenberg
+    // estimates in place of the scale's own measured values.
+    it('keeps each reading composition even if a later frame resets the cache', () => {
+      atCaptureTime(() => {
+        const a = makeAdapter();
+        a.parseCharNotification(CHR_WEIGHT, WEIGHT_FRAME);
+        const reading = a.parseCharNotification(CHR_BODYCOMP, REAL_COMP);
+        expect(reading).not.toBeNull();
+
+        // A trailing zeroed stub arrives before the processor computes metrics.
+        a.parseCharNotification(CHR_BODYCOMP, ZEROED_COMP);
+
+        const payload = a.computeMetrics(reading!, defaultProfile());
+        expect(payload.bodyFatPercent).toBeCloseTo(24.3, 1);
+        expect(payload.boneMass).toBeLessThan(10);
+      });
+    });
+
+    // lb frames: normalizesWeight = true tells the shared layer this adapter
+    // already returns kg, so it skips its own conversion.
+    it('converts an lb-unit weight frame to kg', () => {
+      const a = makeAdapter();
+      const lb = Buffer.alloc(3);
+      lb[0] = 0x01; // flags: lb, no timestamp
+      lb.writeUInt16LE(26000, 1); // 260.00 lb
+      a.parseCharNotification(CHR_WEIGHT, lb);
+      const reading = a.parseCharNotification(CHR_BODYCOMP, Buffer.from([0x00, 0x00, 0xc2, 0x00]));
+      expect(reading).not.toBeNull();
+      expect(reading!.weight).toBeCloseTo(117.93, 1); // not 260
+    });
+
+    // 0xFFFF is the SIG "measurement unsuccessful" sentinel; unclamped it would
+    // export 6553.5 % body fat and a negative bone mass.
+    it('rejects the 0xFFFF unsuccessful-measurement sentinel', () => {
+      atCaptureTime(() => {
+        const a = makeAdapter();
+        a.parseCharNotification(CHR_WEIGHT, WEIGHT_FRAME);
+        const sentinel = Buffer.from('9803ffff962300000000000000000', 'hex');
+        expect(a.parseCharNotification(CHR_BODYCOMP, sentinel)).toBeNull();
       });
     });
 

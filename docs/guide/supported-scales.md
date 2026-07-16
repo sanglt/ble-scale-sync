@@ -1,6 +1,6 @@
 ---
 title: Supported Scales
-description: All 26 BLE smart scale brands supported by BLE Scale Sync.
+description: Every BLE smart scale brand and model supported by BLE Scale Sync.
 head:
   - - meta
     - name: keywords

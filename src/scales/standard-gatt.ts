@@ -20,18 +20,12 @@ const SVC_BODY_COMP_SHORT = '181b';
 const SVC_WEIGHT_SHORT = '181d';
 
 /** Known brand / model substrings for standard-GATT body-composition scales.
- *  Only models NOT handled by specific adapters should be listed here. */
-const KNOWN_NAMES = [
-  'beurer',
-  'silvercrest',
-  'bf105',
-  'bf720',
-  'bf950',
-  'bf500',
-  'bf600',
-  'bf850',
-  'medisana',
-];
+ *  Only models NOT handled by specific adapters should be listed here.
+ *  BF720 / BF105 / BF500 / BF788 / BF950 are SIG consent+bond scales owned by
+ *  BeurerBf720Adapter, so they are deliberately absent: matches() bails on
+ *  isGenericExcludedName() before this list is consulted, which made listing
+ *  them both dead and self-contradictory (#229, #255). */
+const KNOWN_NAMES = ['beurer', 'silvercrest', 'bf600', 'bf850', 'medisana'];
 
 interface CachedGattData {
   bodyFatPercent: number;
@@ -56,17 +50,7 @@ export class StandardGattScaleAdapter implements ScaleAdapterCore, GattWiring, U
     priority: 0,
     custom: true,
     names: {
-      includes: [
-        'beurer',
-        'silvercrest',
-        'bf105',
-        'bf720',
-        'bf950',
-        'bf500',
-        'bf600',
-        'bf850',
-        'medisana',
-      ],
+      includes: ['beurer', 'silvercrest', 'bf600', 'bf850', 'medisana'],
     },
     serviceUuids: ['181b', '181d'],
   };

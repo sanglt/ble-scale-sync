@@ -46,6 +46,9 @@ const UCP_RESULT_NOT_AUTHORIZED = 0x05;
  */
 const HISTORY_MAX_AGE_MS = 5 * 60_000;
 
+/** SIG mass fields are in lb when the frame's unit flag is set. */
+const LBS_TO_KG = 0.453592;
+
 interface CachedComp {
   fat?: number; // %
   muscle?: number; // %
@@ -97,6 +100,11 @@ export class BeurerBf720Adapter implements ScaleAdapterCore, GattWiring, MultiCh
   private cachedWeight = 0;
   private cachedTimestamp: Date | undefined;
   private cachedComp: CachedComp = {};
+  /**
+   * Composition as it stood when each reading was emitted. Weak so buffered
+   * history readings do not pin memory once the processor drops them.
+   */
+  private readonly compByReading = new WeakMap<ScaleReading, CachedComp>();
 
   matches(device: BleDeviceInfo): boolean {
     const name = (device.localName || '').toLowerCase();
@@ -132,6 +140,21 @@ export class BeurerBf720Adapter implements ScaleAdapterCore, GattWiring, MultiCh
     ) {
       return true;
     }
+    // Everything below is the NAMELESS fallback: Linux auto-discovery and the
+    // proxy transports often deliver no local name, and this is how a Beurer
+    // still reaches the right adapter there. A device that DID advertise a name
+    // has already had its chance above, so bow out and let the lower-priority
+    // name-based Beurer / Sanitas adapters take it.
+    //
+    // Without this gate the adapter hijacks its own siblings. The company id is
+    // shared across the whole Beurer range, and the SIG-service requirement
+    // below is free post-connect since every SIG scale exposes 0x181B. So a
+    // MAC-pinned Sanitas SBF72 (which reaches matches() with a name, discovered
+    // services and manufacturer data) would be claimed here at priority 220
+    // instead of by Sanitas SBF72/73 at 170, and then hard-fail asking for a
+    // consent PIN it does not use. See the test below.
+    if (name) return false;
+
     if (device.manufacturerData?.id !== BEURER_COMPANY_ID) return false;
     // A bare company id is too weak: this adapter is ordered ahead of the
     // name-based Beurer/Sanitas adapters, so require a SIG WSS/BCS service
@@ -269,7 +292,12 @@ export class BeurerBf720Adapter implements ScaleAdapterCore, GattWiring, MultiCh
     const isKg = (flags & 0x01) === 0;
     const hasTimestamp = (flags & 0x02) !== 0;
 
-    const weight = data.readUInt16LE(1) * (isKg ? 0.005 : 0.01);
+    // `normalizesWeight = true` promises the shared layer that whatever comes
+    // out of here is already kg, so it skips its own conversion. An lb frame
+    // (flags bit 0) must therefore be converted here or pounds are exported as
+    // kilograms, a 2.2x error. The sibling standard-gatt adapter, which parses
+    // these identical SIG frames, has always done this.
+    const weight = data.readUInt16LE(1) * (isKg ? 0.005 : 0.01 * LBS_TO_KG);
     if (weight > 0 && Number.isFinite(weight)) this.cachedWeight = weight;
 
     if (hasTimestamp) {
@@ -283,7 +311,11 @@ export class BeurerBf720Adapter implements ScaleAdapterCore, GattWiring, MultiCh
     if (data.length < 4) return;
     const flags = data.readUInt16LE(0);
     const isKg = (flags & 0x0001) === 0;
-    const massMul = isKg ? 0.005 : 0.01;
+    // Same lb contract as parseWeightMeasurement: soft lean mass, body water
+    // mass and the optional weight field are all masses, so they need the same
+    // conversion or water% and bone come out wrong. Body fat is a percentage
+    // and is unit-independent per the SIG BCS spec, so it stays unscaled.
+    const massMul = isKg ? 0.005 : 0.01 * LBS_TO_KG;
 
     // Bounds-checked little-endian uint16 reader. Real BF720 frames are
     // well-formed, but a malformed/truncated notification can set flag bits
@@ -312,7 +344,11 @@ export class BeurerBf720Adapter implements ScaleAdapterCore, GattWiring, MultiCh
     // Reset rather than merely skip. `cachedComp` is cleared only in
     // onConnected(), so leaving a previously decoded real value in place would
     // stamp the live weigh-in's body fat onto every backdated history entry.
-    if (fat === 0) {
+    // 0xFFFF is the SIG sentinel for "measurement unsuccessful / unavailable".
+    // buildPayload does not clamp a scale-provided fat, so letting it through
+    // would export 6553.5 % and a negative bone mass. Not observed on these
+    // models, unlike the zeroed stubs, but it is the same class of fabrication.
+    if (fat === 0 || fat === 0xffff) {
       this.cachedComp = {};
       return;
     }
@@ -369,6 +405,12 @@ export class BeurerBf720Adapter implements ScaleAdapterCore, GattWiring, MultiCh
     const reading: ScaleReading = { weight: this.cachedWeight, impedance: 0 };
     const histTs = this.historicalTimestamp(this.cachedTimestamp);
     if (histTs) reading.timestamp = histTs;
+    // Snapshot the composition onto this specific reading. computeMetrics() runs
+    // much later (the processor calls it per buffered frame once the session has
+    // resolved), so reading the live cachedComp there would hand every history
+    // entry whatever happened to be cached at the END of the session. With a
+    // snapshot each reading keeps the composition it was actually built from.
+    this.compByReading.set(reading, { ...this.cachedComp });
     return reading;
   }
 
@@ -378,7 +420,10 @@ export class BeurerBf720Adapter implements ScaleAdapterCore, GattWiring, MultiCh
 
   computeMetrics(reading: ScaleReading, profile: UserProfile): BodyComposition {
     const { weight } = reading;
-    const c = this.cachedComp;
+    // Per-reading snapshot taken in buildReading(). Falling back to the live
+    // cache keeps direct callers (and tests) working for a reading this adapter
+    // did not build.
+    const c = this.compByReading.get(reading) ?? this.cachedComp;
     const comp: ScaleBodyComp = {};
 
     if (c.fat != null) comp.fat = c.fat;

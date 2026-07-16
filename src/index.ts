@@ -1,10 +1,10 @@
 #!/usr/bin/env tsx
 
 import { parseArgs } from 'node:util';
-import { writeFileSync } from 'node:fs';
 import { setDisplayUsers, createMqttProxyDisplayNotifier } from './ble/handler-mqtt-proxy/index.js';
 import { bootstrapMqttProxy } from './ble/mqtt-proxy-bootstrap.js';
 import { notifyReady, startHeartbeat, stopHeartbeat } from './runtime/systemd-watchdog.js';
+import { touchHeartbeat, startFileHeartbeat, stopFileHeartbeat } from './runtime/file-heartbeat.js';
 import { armHardExit } from './runtime/hard-exit.js';
 import { adapters } from './scales/index.js';
 import { assertRegistryIntegrity } from './scales/registry-check.js';
@@ -135,18 +135,6 @@ if (process.platform !== 'win32') {
   });
 }
 
-// ─── Heartbeat ──────────────────────────────────────────────────────────────
-
-const HEARTBEAT_PATH = '/tmp/.ble-scale-sync-heartbeat';
-
-function touchHeartbeat(): void {
-  try {
-    writeFileSync(HEARTBEAT_PATH, new Date().toISOString());
-  } catch {
-    // ignore (e.g., /tmp not writable on Windows)
-  }
-}
-
 // ─── Main ───────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
@@ -219,6 +207,12 @@ async function main(): Promise<void> {
   // systemd Type=notify integration (#144). No-op when NOTIFY_SOCKET is unset.
   notifyReady();
   startHeartbeat();
+  // Docker HEALTHCHECK liveness file (#277). Started here rather than inside the
+  // continuous branch so it also covers bootstrap and the single-run path: until
+  // the first touch the file does not exist at all, and the check's `test -f`
+  // arm fails, so a slow MQTT or Garmin bootstrap could trip the same restart
+  // loop from a different cause.
+  startFileHeartbeat();
 
   const runProcessReading = (raw: Parameters<typeof processReading>[1]): Promise<boolean> =>
     processReading(ctx, raw, {
@@ -227,7 +221,6 @@ async function main(): Promise<void> {
     });
 
   if (!initialResolved.continuousMode) {
-    touchHeartbeat();
     const source = new PollReadingSource(ctx, adapters);
     const raw = await source.nextReading(ctx.signal);
     const success = await runProcessReading(raw);
@@ -304,4 +297,5 @@ main()
   .finally(async () => {
     await shutdownEmbeddedBroker();
     stopHeartbeat();
+    stopFileHeartbeat();
   });

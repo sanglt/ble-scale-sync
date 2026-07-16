@@ -54,7 +54,7 @@ interface CachedComp {
 }
 
 /**
- * Adapter for Beurer SIG-standard BLE scales (BF720, BF105, BF500).
+ * Adapter for Beurer SIG-standard BLE scales (BF720, BF105, BF500, BF788, BF950).
  *
  * These speak pure Bluetooth SIG GATT: Weight Scale (0x181D / 0x2A9D), Body
  * Composition (0x181B / 0x2A9C) and User Data (0x181C / 0x2A9F) services. Body
@@ -74,7 +74,7 @@ export class BeurerBf720Adapter implements ScaleAdapterCore, GattWiring, MultiCh
   readonly match: MatchDescriptor = {
     priority: 220,
     custom: true,
-    names: { includes: ['bf720', 'bf105', 'bf500'] },
+    names: { includes: ['bf720', 'bf105', 'bf500', 'bf788', 'bf950'] },
     serviceUuids: ['181d', '181b'],
     manufacturerId: 0x0611,
   };
@@ -100,13 +100,38 @@ export class BeurerBf720Adapter implements ScaleAdapterCore, GattWiring, MultiCh
 
   matches(device: BleDeviceInfo): boolean {
     const name = (device.localName || '').toLowerCase();
-    // BF500 speaks the same SIG consent+bond protocol as the BF720 (verified
-    // against an HCI snoop in #83: consent write 02/userIndex/pinLE, weight on
-    // 0x2A9D, native body composition on 0x2A9C). On Linux auto-discovery the
-    // advertised service UUIDs and manufacturer data are often absent, so the
-    // name is what routes it here instead of falling to Standard GATT, which
-    // sends a code-0 consent on an unbonded link and reads nothing.
-    if (name.includes('bf720') || name.includes('bf105') || name.includes('bf500')) return true;
+    // BF500 (#83), BF788 (#229) and BF950 (#255) speak the same SIG consent+bond
+    // protocol as the BF720: consent write 02/userIndex/pinLE on the User Control
+    // Point 0x2A9F, weight on 0x2A9D, native body composition on 0x2A9C.
+    //
+    // BF788 is proven from the HCI snoop attached to #229: the app writes
+    // `02 01 d8 09` to 0x2A9F (consent, user 1, PIN 2520 little-endian) and the
+    // scale indicates `20 02 01` (response to op 0x02, success), which is what
+    // this adapter emits byte for byte. A wrong PIN indicates `20 02 05` instead.
+    // The link is bonded first (SMP pairing then ENCRYPTION_CHANGE then LTK
+    // distribution), confirming requiresBonding below.
+    //
+    // BF950 is evidenced by the log in #255: it advertises the exact name
+    // "BF950" and its discovered characteristics include the same SIG set
+    // (0x2A9F/0x2A9D/0x2A9C/0x2A9B/0x2A9E/0x2A99/0x2A9A). The User Control Point
+    // is the discriminator here: a plain BCS/WSS scale has no User Data service.
+    //
+    // Without this name routing they fall to Standard GATT, which sends a code-0
+    // consent on an unbonded link and reads nothing, which is precisely the
+    // "subscribed, then timed out" loop both reporters saw. On Linux
+    // auto-discovery the advertised service UUIDs and manufacturer data are often
+    // absent, so the name is what routes them here. Reading still needs the
+    // per-device beurer_pin and a bonded link, so the ESPHome proxy path
+    // (unbonded) is expected to need the native handler instead.
+    if (
+      name.includes('bf720') ||
+      name.includes('bf105') ||
+      name.includes('bf500') ||
+      name.includes('bf788') ||
+      name.includes('bf950')
+    ) {
+      return true;
+    }
     if (device.manufacturerData?.id !== BEURER_COMPANY_ID) return false;
     // A bare company id is too weak: this adapter is ordered ahead of the
     // name-based Beurer/Sanitas adapters, so require a SIG WSS/BCS service
@@ -135,7 +160,7 @@ export class BeurerBf720Adapter implements ScaleAdapterCore, GattWiring, MultiCh
     const pin = ctx.scaleAuth?.pin;
     if (pin == null) {
       throw new Error(
-        'Beurer BF720/BF105/BF500 needs a consent PIN. Set `users[].beurer_pin` in config.yaml ' +
+        'Beurer BF720/BF105/BF500/BF788/BF950 needs a consent PIN. Set `users[].beurer_pin` in config.yaml ' +
           '(the code the scale was paired with in the Beurer / openScale app, or shown on ' +
           "the scale's control unit).",
       );
@@ -271,6 +296,27 @@ export class BeurerBf720Adapter implements ScaleAdapterCore, GattWiring, MultiCh
     // Body Fat % is always present, immediately after the flags.
     const fat = u16(off);
     if (fat == null) return;
+
+    // Placeholder frames. The BF788 capture in #229 carries 36 body-composition
+    // indications for a single session and 35 of them are zeroed stubs
+    // (`9803 0000 <bmr> 0000 0000 0000 0000`): every composition field is 0 and
+    // only the basal-metabolism field varies. They are paired with the scale's
+    // backfilled history frames, which the app discards.
+    //
+    // A zero body fat is physically impossible, so it is the reliable marker.
+    // It must be rejected rather than cached: `buildReading()` gates on
+    // `fat == null`, which 0 passes, and `computeMetrics()` then derives bone as
+    // `leanBodyMass - softLean`, so a zeroed frame yields boneMass equal to the
+    // entire body weight (verified: 117.92 kg of "bone" from this capture).
+    //
+    // Reset rather than merely skip. `cachedComp` is cleared only in
+    // onConnected(), so leaving a previously decoded real value in place would
+    // stamp the live weigh-in's body fat onto every backdated history entry.
+    if (fat === 0) {
+      this.cachedComp = {};
+      return;
+    }
+
     this.cachedComp.fat = fat * 0.1;
     off += 2;
 

@@ -28,9 +28,13 @@ describe('StandardGattScaleAdapter', () => {
       expect(adapter.matches(p)).toBe(true);
     });
 
+    // Uses a model the Beurer consent adapter does not claim. Specific Beurer
+    // models (BF720/BF105/BF500/BF788/BF950) are SIG consent+bond scales routed
+    // to BeurerBf720Adapter, and derived-excludes strips their name tokens from
+    // this fallback on purpose (#229/#255).
     it('matches known name "beurer"', () => {
       const adapter = makeAdapter();
-      const p = mockPeripheral('Beurer BF950', []);
+      const p = mockPeripheral('Beurer BF600', []);
       expect(adapter.matches(p)).toBe(true);
     });
 

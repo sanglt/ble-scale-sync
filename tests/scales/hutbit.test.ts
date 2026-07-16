@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { HutbitAdapter, hasHutbitSignature } from '../../src/scales/hutbit.js';
+import { HutbitAdapter } from '../../src/scales/hutbit.js';
+import { isHutbitOemAdvert } from '../../src/scales/lefu-signature.js';
 import { adapters } from '../../src/scales/index.js';
 import { resolveAdapter } from '../../src/scales/resolve.js';
 import { uuid16 } from '../../src/scales/body-comp-helpers.js';
@@ -54,7 +55,7 @@ describe('HutbitAdapter (#254)', () => {
 
     it('claims the SWAN-branded advert via the 0x02AC manufacturer signature', () => {
       expect(makeAdapter().matches(swanAdvert())).toBe(true);
-      expect(hasHutbitSignature(swanAdvert())).toBe(true);
+      expect(isHutbitOemAdvert(swanAdvert())).toBe(true);
     });
 
     it('claims the same advert with an empty name (ESPHome proxy transport)', () => {
@@ -98,6 +99,38 @@ describe('HutbitAdapter (#254)', () => {
         characteristicUuids: [uuid16(0xffb1), uuid16(0xffb2), uuid16(0xffb3)],
       };
       expect(resolveAdapter(robiLike, adapters)?.name).toBe('Robi S9');
+    });
+
+    // The OEM claim requires BOTH advertised services, not just the 0x02AC
+    // shape. 0x02AC is SIG-assigned to RTB Elektronik and the Lefu firmware
+    // squats on it, so the shape alone is too weak to claim a device on.
+    it('requires d618 alongside ffb0: the 0x02AC shape alone does not claim a device', () => {
+      const noD618 = swanAdvert();
+      noD618.serviceUuids = [uuid16(0xffb0)];
+      expect(makeAdapter().matches(noD618)).toBe(false);
+      expect(isHutbitOemAdvert(noD618)).toBe(false);
+    });
+
+    // Guards the symmetry between HutbitAdapter.matches() and the RobiS9
+    // bow-out. If Robi ever bows out of a WIDER set than Hutbit claims, this
+    // device is rejected by Robi, unclaimed by Hutbit, and swept up by MGB on
+    // the bare ffb0 descriptor claim, whose parser rejects every frame this
+    // family sends. Today it resolves to Robi and it must stay that way.
+    it('a nameless FFB0+FFB3 unit carrying the 0x02AC shape but no d618 still resolves to Robi', () => {
+      const robiLikeWithMfg: BleDeviceInfo = {
+        localName: '',
+        serviceUuids: [uuid16(0xffb0)],
+        characteristicUuids: [uuid16(0xffb1), uuid16(0xffb2), uuid16(0xffb3)],
+        manufacturerData: { id: 0x02ac, data: Buffer.from('7eb893ecb30301', 'hex') },
+      };
+      expect(resolveAdapter(robiLikeWithMfg, adapters)?.name).toBe('Robi S9');
+    });
+
+    // The Robi guard sits AFTER the robi-name check on purpose, so a correctly
+    // named Robi is never stolen even if it carries the full fingerprint.
+    it('a named Robi S9 carrying the full OEM fingerprint still resolves to Robi', () => {
+      const namedRobi = swanAdvert('Robi S9', [uuid16(0xffb1), uuid16(0xffb2), uuid16(0xffb3)]);
+      expect(resolveAdapter(namedRobi, adapters)?.name).toBe('Robi S9');
     });
   });
 

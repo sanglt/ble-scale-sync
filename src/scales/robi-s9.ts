@@ -11,7 +11,7 @@ import type {
 } from '../interfaces/scale-adapter.js';
 import { uuid16, buildPayload } from './body-comp-helpers.js';
 import { bleLog } from '../ble/types.js';
-import { hasHutbitSignature } from './hutbit.js';
+import { isHutbitOemAdvert } from './lefu-signature.js';
 import type { MatchDescriptor } from './match-descriptor.js';
 
 // ─── Robi S9 (Lefu / Fitdays FFB0-new protocol) ─────────────────────────────
@@ -100,11 +100,13 @@ export class RobiS9Adapter implements ScaleAdapterCore, GattWiring, MultiCharNot
 
     // Hutbit units expose an (unused) FFB3 too, and their local name does not
     // survive every transport (the ESPHome proxy delivers an empty name), so the
-    // swan-name guard above cannot catch a rebranded Hutbit here. Exclude their
-    // manufacturer-data signature before claiming nameless FFB0 (#278) —
+    // swan-name guard above cannot catch a rebranded Hutbit here. Bow out of the
+    // Lefu OEM advertisement fingerprint before claiming nameless FFB0 (#278);
     // otherwise this adapter wins post-discovery re-resolution and replays a
-    // handshake the Hutbit rejects.
-    if (hasHutbitSignature(device)) return false;
+    // handshake the Hutbit rejects. This MUST be the same predicate the Hutbit
+    // claims on: bowing out of a wider set than the Hutbit takes would strand
+    // the device on MGB, which cannot parse this family's frames.
+    if (isHutbitOemAdvert(device)) return false;
 
     // Nameless: require the FFB0 vendor service AND the FFB3 result characteristic
     // (post-discovery) to disambiguate from MGB scales, which expose FFB1/FFB2

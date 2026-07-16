@@ -105,6 +105,13 @@ export function checkRegistryIntegrity(adapters: readonly ScaleAdapter[]): Regis
     ['QN Scale', 'Renpho ES-WBE28'],
     ['Beurer BF720/BF105', 'Xiaomi Mi Scale 2'],
     ['Robi S9', 'MGB (Swan/Icomon/YG)'],
+    // The FFB0 Lefu family resolves strictly Robi > Hutbit > MGB (#278). Robi
+    // must outrank Hutbit so a named Robi carrying the OEM signature is never
+    // stolen, and Hutbit must outrank MGB so a SWAN-branded Hutbit is not swept
+    // up by MGB's bare-ffb0 descriptor claim. The overlap analysis below cannot
+    // see this: it skips any pair where either side is custom.
+    ['Robi S9', 'Hutbit'],
+    ['Hutbit', 'MGB (Swan/Icomon/YG)'],
   ];
   for (const [hi, lo] of INVARIANTS) {
     const a = byName.get(hi);

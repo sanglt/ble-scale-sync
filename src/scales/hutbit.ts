@@ -10,32 +10,13 @@ import type {
 } from '../interfaces/scale-adapter.js';
 import { uuid16, buildPayload } from './body-comp-helpers.js';
 import { bleLog } from '../ble/types.js';
+import { isHutbitOemAdvert, LEFU_COMPANY_ID } from './lefu-signature.js';
 import type { MatchDescriptor } from './match-descriptor.js';
 
 // ─── Hutbit Smart Scale (Lefu / Fitdays FFB0 "AC02" 8-byte protocol) ─────────
 
 const CHR_FFB1 = uuid16(0xffb1); // write (handshake, phone→scale)
 const CHR_FFB2 = uuid16(0xffb2); // notify (weight stream, scale→phone)
-
-/** Lefu/Fitdays company id carried in the Hutbit's manufacturer data. */
-const MANUFACTURER_ID = 0x02ac;
-
-/**
- * True when the advertisement carries the Hutbit's manufacturer-data signature:
- * company id 0x02AC with a 7-byte payload of the device's own MAC reversed plus
- * a status byte (0x00 idle / 0x01 active), as documented in #254. Exported so
- * the Robi S9's nameless FFB0+FFB3 claim can exclude Hutbit units (#278): the
- * Hutbit exposes an (unused) FFB3, and the local name does not survive every
- * transport (the ESPHome proxy delivers advertisements with an empty name), so
- * without this signature check the Robi adapter wins post-discovery
- * re-resolution and replays a handshake the Hutbit rejects.
- */
-export function hasHutbitSignature(device: BleDeviceInfo): boolean {
-  const m = device.manufacturerData;
-  return (
-    m?.id === MANUFACTURER_ID && m.data.length === 7 && (m.data[6] === 0x00 || m.data[6] === 0x01)
-  );
-}
 
 /**
  * Handshake replayed on FFB1 (write-without-response) after enabling FFB2
@@ -84,7 +65,7 @@ export class HutbitAdapter implements ScaleAdapterCore, GattWiring {
     custom: true,
     names: { includes: ['hutbit'] },
     serviceUuids: ['ffb0'],
-    manufacturerId: MANUFACTURER_ID,
+    manufacturerId: LEFU_COMPANY_ID,
   };
   readonly charNotifyUuid = CHR_FFB2;
   readonly charWriteUuid = CHR_FFB1;
@@ -99,19 +80,17 @@ export class HutbitAdapter implements ScaleAdapterCore, GattWiring {
 
   matches(device: BleDeviceInfo): boolean {
     // Branded units advertise "Hutbit Scale". Lefu OEM stock units advertise a
-    // generic name instead (observed: "SWAN", #278) — and over the ESPHome
-    // proxy the local name arrives empty entirely — so the name alone is not
-    // enough.
+    // generic name instead (observed: "SWAN", #278), and over the ESPHome proxy
+    // the local name arrives empty entirely because it lives in the scan
+    // response, so the name alone is not enough.
     if ((device.localName || '').toLowerCase().includes('hutbit')) return true;
 
-    // OEM/rebranded units: claim on the manufacturer-data signature (0x02AC +
-    // reversed-MAC payload + status byte) combined with the advertised FFB0
-    // vendor service. This deliberately does NOT claim the broader nameless
-    // FFB0 space — without the 0x02AC signature that space still belongs to
-    // the Robi S9 (FFB3 result char) and the MGB fallback.
-    const uuids = (device.serviceUuids || []).map((u) => u.toLowerCase());
-    const hasFfb0 = uuids.some((u) => u === 'ffb0' || u === uuid16(0xffb0));
-    return hasFfb0 && hasHutbitSignature(device);
+    // OEM/rebranded units: claim on the advertisement fingerprint instead. This
+    // deliberately does NOT claim the broader nameless FFB0 space; without the
+    // fingerprint that space still belongs to the Robi S9 (FFB3 result char)
+    // and the MGB fallback. RobiS9Adapter.matches() bows out to this exact
+    // predicate, so the two must never drift apart (see lefu-signature.ts).
+    return isHutbitOemAdvert(device);
   }
 
   async onConnected(ctx: ConnectionContext): Promise<void> {

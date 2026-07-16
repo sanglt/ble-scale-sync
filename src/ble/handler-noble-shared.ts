@@ -526,7 +526,18 @@ export function createNobleHandler({ noble, getState }: NobleHandlerDeps) {
           const name = peripheral.advertisement?.localName ?? '';
           bleLog.debug(`Services: [${serviceUuids.join(', ')}]`);
 
-          const info: BleDeviceInfo = { localName: name, serviceUuids, characteristicUuids };
+          // Manufacturer data matters here too: target-MAC mode skips the
+          // discovery-time match, so this is the ONLY adapter resolution for a
+          // configured scale_mac. Adapters that fingerprint the advertisement
+          // (Hutbit's Lefu OEM signature #278, Beurer 0x0611, Mi Scale, QN)
+          // silently lost that signal without it, so an OEM-rebranded unit fell
+          // through to a wrong adapter on Windows and macOS.
+          const info: BleDeviceInfo = {
+            localName: name,
+            serviceUuids,
+            characteristicUuids,
+            manufacturerData: parseMfgData(peripheral.advertisement?.manufacturerData),
+          };
           const found = resolveAdapter(info, adapters);
           if (!found) {
             throw new Error(

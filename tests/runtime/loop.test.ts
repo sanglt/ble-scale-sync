@@ -47,6 +47,47 @@ function makeSource(): {
 }
 
 describe('runContinuousLoop', () => {
+  // #277: the timer in src/runtime/file-heartbeat.ts is what actually keeps the
+  // Docker HEALTHCHECK satisfied while idle, because this loop blocks in
+  // nextReading() until a weigh-in arrives. The per-iteration touch is now
+  // redundant but deliberately kept, so this locks the contract: do not delete
+  // it on the assumption that the timer covers everything.
+  it('touches the heartbeat once per iteration', async () => {
+    const ac = new AbortController();
+    const { source, nextReading } = makeSource();
+    const touchHeartbeat = vi.fn();
+
+    // First iteration completes, the second parks in nextReading. That second
+    // park is the idle state this whole fix is about: the heartbeat must have
+    // been touched before the block, and nothing may touch it again until a
+    // reading arrives.
+    const parked = deferred<RawReading>();
+    nextReading.mockImplementationOnce(async () => STUB_RAW);
+    nextReading.mockImplementation(() => parked.promise);
+
+    const loop = runContinuousLoop({
+      source,
+      processReading: async () => true,
+      signal: ac.signal,
+      touchHeartbeat,
+      isReloadRequested: () => false,
+      clearReloadRequest: () => {},
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(nextReading).toHaveBeenCalledTimes(2);
+    expect(touchHeartbeat).toHaveBeenCalledTimes(2);
+
+    // Parked in nextReading: no further touches, which is exactly why the
+    // timer-based heartbeat exists.
+    await vi.advanceTimersByTimeAsync(600_000);
+    expect(touchHeartbeat).toHaveBeenCalledTimes(2);
+
+    ac.abort();
+    parked.resolve(STUB_RAW);
+    await loop;
+  });
+
   beforeEach(() => {
     vi.useFakeTimers();
     vi.spyOn(console, 'log').mockImplementation(() => {});

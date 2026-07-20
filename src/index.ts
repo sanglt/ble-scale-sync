@@ -1,10 +1,10 @@
 #!/usr/bin/env tsx
 
 import { parseArgs } from 'node:util';
-import { writeFileSync } from 'node:fs';
 import { setDisplayUsers, createMqttProxyDisplayNotifier } from './ble/handler-mqtt-proxy/index.js';
 import { bootstrapMqttProxy } from './ble/mqtt-proxy-bootstrap.js';
 import { notifyReady, startHeartbeat, stopHeartbeat } from './runtime/systemd-watchdog.js';
+import { touchHeartbeat, startFileHeartbeat, stopFileHeartbeat } from './runtime/file-heartbeat.js';
 import { armHardExit } from './runtime/hard-exit.js';
 import { adapters } from './scales/index.js';
 import { assertRegistryIntegrity } from './scales/registry-check.js';
@@ -135,21 +135,17 @@ if (process.platform !== 'win32') {
   });
 }
 
-// ─── Heartbeat ──────────────────────────────────────────────────────────────
-
-const HEARTBEAT_PATH = '/tmp/.ble-scale-sync-heartbeat';
-
-function touchHeartbeat(): void {
-  try {
-    writeFileSync(HEARTBEAT_PATH, new Date().toISOString());
-  } catch {
-    // ignore (e.g., /tmp not writable on Windows)
-  }
-}
-
 // ─── Main ───────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
+  // Docker HEALTHCHECK liveness file (#277). First statement in main() on
+  // purpose: on a fresh container the file does not exist yet, so the check's
+  // `test -f` arm fails until the first touch. Everything below (the mqtt-proxy
+  // bootstrap, the exporter healthchecks, BLE source construction) happens
+  // inside that window, so starting later would leave a gap where a slow
+  // bootstrap trips the very restart loop this fixes. Stopped in the epilogue.
+  startFileHeartbeat();
+
   const isMultiUser = ctx.config.users.length > 1;
   const modeLabel = initialResolved.continuousMode ? ' (continuous)' : '';
   const userLabel = isMultiUser ? ` [${ctx.config.users.length} users]` : '';
@@ -227,7 +223,6 @@ async function main(): Promise<void> {
     });
 
   if (!initialResolved.continuousMode) {
-    touchHeartbeat();
     const source = new PollReadingSource(ctx, adapters);
     const raw = await source.nextReading(ctx.signal);
     const success = await runProcessReading(raw);
@@ -304,4 +299,5 @@ main()
   .finally(async () => {
     await shutdownEmbeddedBroker();
     stopHeartbeat();
+    stopFileHeartbeat();
   });

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { BeurerBf720Adapter } from '../../src/scales/beurer-bf720.js';
+import { resolveAdapter } from '../../src/scales/resolve.js';
 import type { BleDeviceInfo, ConnectionContext } from '../../src/interfaces/scale-adapter.js';
 import { uuid16 } from '../../src/scales/body-comp-helpers.js';
 import {
@@ -42,9 +43,25 @@ describe('BeurerBf720Adapter', () => {
   });
 
   describe('matches()', () => {
-    it.each(['BF720', 'beurer bf105', 'My BF720 Scale', 'BF500'])('matches name "%s"', (name) => {
-      expect(makeAdapter().matches(mockPeripheral(name))).toBe(true);
-    });
+    it.each(['BF720', 'beurer bf105', 'My BF720 Scale', 'BF500', 'BF788', 'BF950'])(
+      'matches name "%s"',
+      (name) => {
+        expect(makeAdapter().matches(mockPeripheral(name))).toBe(true);
+      },
+    );
+
+    // #229 (BF788) and #255 (BF950): both are SIG consent+bond Beurer scales that
+    // were mis-routing to Standard GATT (which sends a useless code-0 consent).
+    // They must resolve to this adapter (priority 220) on the name alone, the same
+    // way BF500 does, so the real consent+bond path runs. "BF950" is the exact
+    // advertised name from the #255 log.
+    it.each(['BF788', 'BF950'])(
+      'resolves "%s" to the Beurer adapter, not Standard GATT',
+      (name) => {
+        const info: BleDeviceInfo = { localName: name, serviceUuids: ['181d', '181b'] };
+        expect(resolveAdapter(info)?.name).toBe('Beurer BF720/BF105');
+      },
+    );
 
     // #83: BF500 speaks the same SIG consent+bond protocol; it must route here
     // (priority 220) rather than to Standard GATT (priority 0), which sends a
@@ -87,6 +104,23 @@ describe('BeurerBf720Adapter', () => {
         serviceData: [{ uuid: uuid16(0x181d), data: Buffer.alloc(0) }],
       };
       expect(makeAdapter().matches(viaServiceData)).toBe(true);
+    });
+
+    // The company-id branch is the NAMELESS fallback. A MAC-pinned Sanitas
+    // SBF72 reaches matches() post-connect with its name, its discovered
+    // services (every SIG scale exposes 0x181B, so the SIG gate is free there)
+    // and Beurer's shared company id. Without the name bow-out this adapter
+    // (priority 220) stole it from Sanitas SBF72/73 (170) and then hard-failed
+    // demanding a consent PIN the SBF72 does not use.
+    it('does not hijack a named Beurer sibling that shares the company id', () => {
+      const sbf72: BleDeviceInfo = {
+        localName: 'SBF72',
+        serviceUuids: [uuid16(0x181b), uuid16(0x181c)],
+        characteristicUuids: [uuid16(0x2a9c), uuid16(0x2a9f)],
+        manufacturerData: { id: 0x0611, data: Buffer.alloc(0) },
+      };
+      expect(makeAdapter().matches(sbf72)).toBe(false);
+      expect(resolveAdapter(sbf72)?.name).toBe('Sanitas SBF72/73');
     });
 
     it('does not match unrelated name / other company id', () => {
@@ -201,6 +235,124 @@ describe('BeurerBf720Adapter', () => {
       const a = makeAdapter();
       expect(a.isComplete({ weight: 80, impedance: 0 })).toBe(true);
       expect(a.isComplete({ weight: 0, impedance: 0 })).toBe(false);
+    });
+  });
+
+  // Frames lifted verbatim from the BF788 HCI snoop attached to #229. The
+  // session carried 36 body-composition indications: 35 zeroed stubs paired
+  // with the scale's backfilled history, and exactly one real frame.
+  describe('BF788 real capture (#229)', () => {
+    // 0e | 205c | ea07 07 0e 17 29 20 | 01 | 4001 | 8007
+    // flags 0x0e, weight 0x5c20 * 0.005 = 117.92 kg, 2026-07-14 23:41:32,
+    // user 1, BMI 32.0, height 192.0 cm. 117.92 / 1.92^2 = 31.99, self-consistent.
+    const WEIGHT_FRAME = Buffer.from('0e205cea07070e1729200140018007', 'hex');
+    // flags 0x0398: BMR, muscle %, soft lean mass, body water mass, impedance.
+    // fat 0x00f3 = 24.3 %, muscle 0x0189 = 39.3 %, soft lean 0x4240 * 0.005 =
+    // 84.8 kg, water 0x2ffa * 0.005 = 61.41 kg, impedance 0x0f55 = 392.5 ohm.
+    const REAL_COMP = Buffer.from('9803f300962389014042fa2f550f', 'hex');
+    // The zeroed stub: every composition field is 0, only BMR varies.
+    const ZEROED_COMP = Buffer.from('9803000096230000000000000000', 'hex');
+
+    function atCaptureTime(fn: () => void): void {
+      vi.useFakeTimers();
+      // Inside HISTORY_MAX_AGE_MS of the frame's embedded stamp, so the reading
+      // is classified live rather than backdated and buffered as history.
+      vi.setSystemTime(new Date(2026, 6, 14, 23, 41, 40));
+      try {
+        fn();
+      } finally {
+        vi.useRealTimers();
+      }
+    }
+
+    it('decodes the real weight + composition pair', () => {
+      atCaptureTime(() => {
+        const a = makeAdapter();
+        expect(a.parseCharNotification(CHR_WEIGHT, WEIGHT_FRAME)).toBeNull();
+        const reading = a.parseCharNotification(CHR_BODYCOMP, REAL_COMP);
+        expect(reading).not.toBeNull();
+        expect(reading!.weight).toBeCloseTo(117.92, 2);
+
+        const payload = a.computeMetrics(reading!, defaultProfile());
+        expect(payload.bodyFatPercent).toBeCloseTo(24.3, 1);
+        // Water mass 61.41 kg / 117.92 kg ~ 52.1 %.
+        expect(payload.waterPercent).toBeCloseTo(52.1, 0);
+        // The regression this guards: bone must be a plausible mass, not the
+        // whole body weight.
+        expect(payload.boneMass).toBeGreaterThan(0);
+        expect(payload.boneMass).toBeLessThan(10);
+      });
+    });
+
+    // Without the zero guard this yields boneMass = 117.92 kg, because
+    // buildReading() gates on `fat == null` (which 0 passes) and computeMetrics
+    // derives bone as leanBodyMass - softLean = weight - 0.
+    it('emits nothing for a zeroed placeholder composition frame', () => {
+      atCaptureTime(() => {
+        const a = makeAdapter();
+        expect(a.parseCharNotification(CHR_WEIGHT, WEIGHT_FRAME)).toBeNull();
+        expect(a.parseCharNotification(CHR_BODYCOMP, ZEROED_COMP)).toBeNull();
+      });
+    });
+
+    // computeMetrics() runs long after the session resolves, once per buffered
+    // frame, so it must use the composition each reading was BUILT from rather
+    // than whatever the cache holds at the end. Otherwise a trailing stub wipes
+    // the cache and the buffered history reading silently exports Deurenberg
+    // estimates in place of the scale's own measured values.
+    it('keeps each reading composition even if a later frame resets the cache', () => {
+      atCaptureTime(() => {
+        const a = makeAdapter();
+        a.parseCharNotification(CHR_WEIGHT, WEIGHT_FRAME);
+        const reading = a.parseCharNotification(CHR_BODYCOMP, REAL_COMP);
+        expect(reading).not.toBeNull();
+
+        // A trailing zeroed stub arrives before the processor computes metrics.
+        a.parseCharNotification(CHR_BODYCOMP, ZEROED_COMP);
+
+        const payload = a.computeMetrics(reading!, defaultProfile());
+        expect(payload.bodyFatPercent).toBeCloseTo(24.3, 1);
+        expect(payload.boneMass).toBeLessThan(10);
+      });
+    });
+
+    // lb frames: normalizesWeight = true tells the shared layer this adapter
+    // already returns kg, so it skips its own conversion.
+    it('converts an lb-unit weight frame to kg', () => {
+      const a = makeAdapter();
+      const lb = Buffer.alloc(3);
+      lb[0] = 0x01; // flags: lb, no timestamp
+      lb.writeUInt16LE(26000, 1); // 260.00 lb
+      a.parseCharNotification(CHR_WEIGHT, lb);
+      const reading = a.parseCharNotification(CHR_BODYCOMP, Buffer.from([0x00, 0x00, 0xc2, 0x00]));
+      expect(reading).not.toBeNull();
+      expect(reading!.weight).toBeCloseTo(117.93, 1); // not 260
+    });
+
+    // 0xFFFF is the SIG "measurement unsuccessful" sentinel; unclamped it would
+    // export 6553.5 % body fat and a negative bone mass.
+    it('rejects the 0xFFFF unsuccessful-measurement sentinel', () => {
+      atCaptureTime(() => {
+        const a = makeAdapter();
+        a.parseCharNotification(CHR_WEIGHT, WEIGHT_FRAME);
+        const sentinel = Buffer.from('9803ffff962300000000000000000', 'hex');
+        expect(a.parseCharNotification(CHR_BODYCOMP, sentinel)).toBeNull();
+      });
+    });
+
+    // A zeroed frame must RESET the cache, not merely skip assignment.
+    // cachedComp is cleared only in onConnected(), so a stale real value would
+    // otherwise be stamped onto every backdated history entry that follows.
+    it('does not leak a previously decoded body fat onto a later zeroed frame', () => {
+      atCaptureTime(() => {
+        const a = makeAdapter();
+        a.parseCharNotification(CHR_WEIGHT, WEIGHT_FRAME);
+        expect(a.parseCharNotification(CHR_BODYCOMP, REAL_COMP)).not.toBeNull();
+
+        // History frame: same shape, different weight, paired with a stub.
+        a.parseCharNotification(CHR_WEIGHT, WEIGHT_FRAME);
+        expect(a.parseCharNotification(CHR_BODYCOMP, ZEROED_COMP)).toBeNull();
+      });
     });
   });
 });

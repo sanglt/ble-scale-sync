@@ -194,7 +194,7 @@ The watchdog counts only cycles where the Bluetooth radio looks unhealthy: a con
 ::: warning The watchdog recovers by **exiting the process** — set a restart policy
 The recovery is the process _exiting_ so the supervisor starts it again. You **must** run with `restart: unless-stopped` (Compose) or `--restart unless-stopped` (`docker run`). Without a restart policy the container just stops.
 
-A Docker/Compose `restart:` policy fires only on process **exit** — it does **not** act on the `HEALTHCHECK` going `unhealthy`. If you see the container stuck `Up (unhealthy)` but never restarting, plain Docker is working as designed: only Swarm, Kubernetes, or an [autoheal](https://github.com/willfarrell/docker-autoheal) sidecar restarts on health status. With a restart policy and the hard-exit floor below, the process always exits, so the policy always fires.
+A Docker/Compose `restart:` policy fires only on process **exit**. It does **not** act on the `HEALTHCHECK` going `unhealthy`. If you see the container stuck `Up (unhealthy)` but never restarting, plain Docker is working as designed: only Swarm, Kubernetes, an [autoheal](https://github.com/willfarrell/docker-autoheal) sidecar, or the **Home Assistant Supervisor** (via the add-on watchdog toggle, which is on by default) restarts on health status. With a restart policy and the hard-exit floor below, the process always exits, so the policy always fires.
 :::
 
 To bound the rare case where a wedged D-Bus/BlueZ handle pins the event loop open and graceful shutdown cannot drain (the process logs `Stopped.` but never exits, so the restart policy never fires), the app force-exits 5s after any abort-driven shutdown. Override with `BLE_HARD_EXIT_GRACE_MS` (1000–60000 ms) if your cleanup legitimately needs longer.
@@ -215,6 +215,14 @@ docker run ... -e BLE_WATCHDOG_MAX_FAILURES=10 ghcr.io/kristianp26/ble-scale-syn
 devices:
   - /dev/rfkill:/dev/rfkill
 ```
+
+**Container healthcheck (Docker `HEALTHCHECK`).** The image reports healthy while `/tmp/.ble-scale-sync-heartbeat` has been written within the last 5 minutes. The app touches that file every 30 s for as long as the process is alive, independently of whether anyone is weighing in, so an idle scale never makes the container look unhealthy.
+
+::: warning Scope of this healthcheck
+Same contract as the systemd watchdog below: it only catches **whole-loop freezes**. A frozen event loop cannot run the 30 s timer either, so the file goes stale exactly when it should. If the event loop is alive but a specific BLE handler is wedged, the heartbeat keeps ticking; that case belongs to `runtime.watchdog_max_consecutive_failures` and the hard-exit floor above.
+:::
+
+**Home Assistant add-on restarts every ~7 minutes.** Fixed in versions after 1.20.0. On 1.20.0 and earlier the heartbeat file was only touched when a reading arrived, so on HAOS any idle gap longer than 5 minutes flipped the container to `unhealthy` and the Supervisor watchdog restarted the add-on, forever. Symptom in the Supervisor log: `Watchdog found app BLE Scale Sync is unhealthy, restarting...` repeating on a fixed cadence, with the add-on log showing only clean startup and shutdown cycles. Workaround on affected versions: turn off the add-on's **Watchdog** toggle. Upgrading is the real fix.
 
 **Systemd watchdog (Type=notify).** Defense in depth for the rare case where a synchronous D-Bus stall freezes the Node event loop entirely. When that happens the in-process watchdog cannot fire either, since `setTimeout` callbacks never run. Letting systemd do the liveness check from outside the process is the clean fix.
 

@@ -89,6 +89,14 @@ const SVC_AE00 = 'ae00';
 const SVC_SIG_BCS = '181b';
 const SVC_SIG_WSS = '181d';
 
+// SIG User Control Point + Weight Measurement. Together these identify a SIG
+// consent scale (Beurer BF7xx/BF9xx), which also exposes a vendor 0xFFF0
+// service and would otherwise be claimed by the nameless fallback in matches()
+// (#229). The User Control Point belongs to the User Data service, which QN
+// scales do not implement.
+const CHR_SIG_USER_CONTROL_POINT = uuid16(0x2a9f);
+const CHR_SIG_WEIGHT_MEASUREMENT = uuid16(0x2a9d);
+
 /** Seconds from Unix epoch to 2000-01-01 00:00:00 UTC. */
 const SCALE_EPOCH_OFFSET = 946684800;
 
@@ -399,11 +407,24 @@ export class QnScaleAdapter implements ScaleAdapterCore, GattWiring, BroadcastSo
       chars.some((u) => u === 'ffe1' || u === CHR_NOTIFY_T1) &&
       chars.some((u) => u === 'ffe3' || u === CHR_WRITE_T1);
 
+    // #229: the Beurer BF7xx/BF9xx diagnostic scales expose a vendor 0xFFF0
+    // service alongside their SIG stack (confirmed in the BF788 HCI snoop:
+    // services 0x181B, 0x181D, 0x181C AND 0xFFF0), so hasQnVendor is true for
+    // them. With no advertised name, which is the norm on the MAC-pinned
+    // post-connect path, this fallback claimed the scale at priority 250 and the
+    // reporter saw it alternate between QN Scale and Standard GATT, reading
+    // nothing either way. The SIG User Control Point is the discriminator: it
+    // belongs to the User Data service, which a QN scale does not implement.
+    // Mirrors the looksLikeWbe28 mutual exclusion above.
+    const hasSigConsent =
+      chars.some((u) => u === '2a9f' || u === CHR_SIG_USER_CONTROL_POINT) &&
+      chars.some((u) => u === '2a9d' || u === CHR_SIG_WEIGHT_MEASUREMENT);
+
     // Fallback: match by QN vendor service UUID or the Type-1 char pair, but
     // only for unnamed devices. Named devices (e.g. "eufy T9149") should match
     // their own specific adapter rather than being caught by these generic
     // structural checks.
-    if (!name && (hasQnVendor || hasQnType1Chars)) return true;
+    if (!name && !hasSigConsent && (hasQnVendor || hasQnType1Chars)) return true;
 
     return false;
   }

@@ -12,7 +12,13 @@ import type { BleDeviceInfo } from '../../src/interfaces/scale-adapter.js';
  * MAC-pinned paths now build after GATT discovery.
  */
 describe('false-match resolution (#255 / #258 / #251)', () => {
-  it('#255: Beurer BF950 (bare 0x181B, no Mi vendor char) resolves to Standard GATT, not Xiaomi', () => {
+  // The #255 log shows this scale advertising the exact name "BF950" and
+  // exposing the SIG User Data / User Control Point set, so it is a Beurer SIG
+  // consent+bond scale and now routes to BeurerBf720Adapter (priority 220).
+  // Standard GATT was never able to read it: it sends a code-0 consent on an
+  // unbonded link, which is why the reporter saw subscribe-then-timeout. The
+  // not-Xiaomi assertion is the actual #255 regression guard and is kept.
+  it('#255: Beurer BF950 (bare 0x181B, no Mi vendor char) resolves to Beurer, not Xiaomi', () => {
     const info: BleDeviceInfo = {
       localName: 'BF950',
       serviceUuids: [uuid16(0x181b), uuid16(0x181d)],
@@ -21,8 +27,32 @@ describe('false-match resolution (#255 / #258 / #251)', () => {
       characteristicUuids: [uuid16(0x2a9d), uuid16(0x2a2f), uuid16(0xfaa1), uuid16(0xfaa2)],
     };
     const resolved = resolveAdapter(info, adapters);
-    expect(resolved?.name).toBe('Standard GATT (BCS/WSS)');
+    expect(resolved?.name).toBe('Beurer BF720/BF105');
     expect(resolved?.name).not.toBe('Xiaomi Mi Scale 2');
+  });
+
+  // Same scale seen on the MAC-pinned post-connect path, where node-ble supplies
+  // no advertised name. It exposes a vendor 0xFFF0 service alongside its SIG
+  // stack, which used to hand it to QN Scale at priority 250 (#229: the reporter
+  // saw it alternate between QN Scale and Standard GATT). The SIG User Control
+  // Point now excludes it from QN's nameless fallback.
+  // Documents the honest current outcome, not an aspiration. QN no longer
+  // claims it, but with no advertised name and no manufacturer data there is
+  // nothing left that identifies it as a Beurer, so it lands on Standard GATT.
+  // That still cannot read the scale (it sends a code-0 consent unbonded), so
+  // the BF788 depends on its name reaching matches(). Teaching this adapter a
+  // structural SIG-consent match is deliberately NOT done: at priority 220 it
+  // would claim every generic BCS/WSS scale exposing a User Data service and
+  // demand a consent PIN from users whose setups work today.
+  it('#229: nameless SIG consent scale with vendor fff0 is not claimed by QN Scale', () => {
+    const info: BleDeviceInfo = {
+      localName: '',
+      serviceUuids: [uuid16(0x181b), uuid16(0x181d), uuid16(0x181c), uuid16(0xfff0)],
+      characteristicUuids: [uuid16(0x2a9d), uuid16(0x2a9c), uuid16(0x2a9f), uuid16(0x2a9b)],
+    };
+    const resolved = resolveAdapter(info, adapters);
+    expect(resolved?.name).not.toBe('QN Scale');
+    expect(resolved?.name).toBe('Standard GATT (BCS/WSS)');
   });
 
   it('#258: QN-family Elis 1 (ae01/ae02 + generic fff1/fff2) resolves to QN Scale, not Eufy P2', () => {

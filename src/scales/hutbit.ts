@@ -10,6 +10,7 @@ import type {
 } from '../interfaces/scale-adapter.js';
 import { uuid16, buildPayload } from './body-comp-helpers.js';
 import { bleLog } from '../ble/types.js';
+import { isHutbitOemAdvert, LEFU_COMPANY_ID } from './lefu-signature.js';
 import type { MatchDescriptor } from './match-descriptor.js';
 
 // ─── Hutbit Smart Scale (Lefu / Fitdays FFB0 "AC02" 8-byte protocol) ─────────
@@ -64,6 +65,7 @@ export class HutbitAdapter implements ScaleAdapterCore, GattWiring {
     custom: true,
     names: { includes: ['hutbit'] },
     serviceUuids: ['ffb0'],
+    manufacturerId: LEFU_COMPANY_ID,
   };
   readonly charNotifyUuid = CHR_FFB2;
   readonly charWriteUuid = CHR_FFB1;
@@ -77,12 +79,18 @@ export class HutbitAdapter implements ScaleAdapterCore, GattWiring {
   private final = false;
 
   matches(device: BleDeviceInfo): boolean {
-    // Advertised name is "Hutbit Scale"; match by name only. The nameless FFB0
-    // space is deliberately left to the Robi S9 (FFB3 result char) and the MGB
-    // fallback — the Hutbit exposes no unique post-discovery characteristic
-    // (FFB3 is present but unused), so claiming nameless FFB0 here would risk
-    // shadowing those adapters.
-    return (device.localName || '').toLowerCase().includes('hutbit');
+    // Branded units advertise "Hutbit Scale". Lefu OEM stock units advertise a
+    // generic name instead (observed: "SWAN", #278), and over the ESPHome proxy
+    // the local name arrives empty entirely because it lives in the scan
+    // response, so the name alone is not enough.
+    if ((device.localName || '').toLowerCase().includes('hutbit')) return true;
+
+    // OEM/rebranded units: claim on the advertisement fingerprint instead. This
+    // deliberately does NOT claim the broader nameless FFB0 space; without the
+    // fingerprint that space still belongs to the Robi S9 (FFB3 result char)
+    // and the MGB fallback. RobiS9Adapter.matches() bows out to this exact
+    // predicate, so the two must never drift apart (see lefu-signature.ts).
+    return isHutbitOemAdvert(device);
   }
 
   async onConnected(ctx: ConnectionContext): Promise<void> {

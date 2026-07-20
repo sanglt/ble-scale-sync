@@ -1,8 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
 import { HutbitAdapter } from '../../src/scales/hutbit.js';
+import { isHutbitOemAdvert } from '../../src/scales/lefu-signature.js';
 import { adapters } from '../../src/scales/index.js';
+import { resolveAdapter } from '../../src/scales/resolve.js';
 import { uuid16 } from '../../src/scales/body-comp-helpers.js';
-import type { ConnectionContext } from '../../src/interfaces/scale-adapter.js';
+import type { BleDeviceInfo, ConnectionContext } from '../../src/interfaces/scale-adapter.js';
 import {
   mockPeripheral,
   defaultProfile,
@@ -35,6 +37,117 @@ describe('HutbitAdapter (#254)', () => {
         uuid16(0xffb2),
       ]);
       expect(makeAdapter().matches(info)).toBe(false);
+    });
+  });
+
+  describe('OEM/rebranded advertisement (SWAN, #278)', () => {
+    // Real capture: Lefu OEM stock branding. Manufacturer data 0x02AC carries
+    // the device's MAC reversed (03:B3:EC:93:B8:7E) + status byte (01 = active).
+    // Over the ESPHome proxy the local name arrives empty.
+    function swanAdvert(name = 'SWAN', charUuids?: string[]): BleDeviceInfo {
+      return {
+        localName: name,
+        serviceUuids: [uuid16(0xd618), uuid16(0xffb0)],
+        manufacturerData: { id: 0x02ac, data: Buffer.from('7eb893ecb30301', 'hex') },
+        ...(charUuids ? { characteristicUuids: charUuids } : {}),
+      };
+    }
+
+    it('claims the SWAN-branded advert via the 0x02AC manufacturer signature', () => {
+      expect(makeAdapter().matches(swanAdvert())).toBe(true);
+      expect(isHutbitOemAdvert(swanAdvert())).toBe(true);
+    });
+
+    it('claims the same advert with an empty name (ESPHome proxy transport)', () => {
+      expect(makeAdapter().matches(swanAdvert(''))).toBe(true);
+    });
+
+    it('accepts the idle-status variant (payload ends 0x00)', () => {
+      const idle = swanAdvert();
+      idle.manufacturerData = { id: 0x02ac, data: Buffer.from('7eb893ecb30300', 'hex') };
+      expect(makeAdapter().matches(idle)).toBe(true);
+    });
+
+    it('rejects 0x02AC data that does not fit the signature shape', () => {
+      const wrongLen = swanAdvert('');
+      wrongLen.manufacturerData = { id: 0x02ac, data: Buffer.from('7eb893ecb303', 'hex') };
+      expect(makeAdapter().matches(wrongLen)).toBe(false);
+
+      const wrongStatus = swanAdvert('');
+      wrongStatus.manufacturerData = { id: 0x02ac, data: Buffer.from('7eb893ecb303ff', 'hex') };
+      expect(makeAdapter().matches(wrongStatus)).toBe(false);
+    });
+
+    it('registry resolves the SWAN broadcast to Hutbit, not MGB', () => {
+      expect(resolveAdapter(swanAdvert(), adapters)?.name).toBe('Hutbit');
+      expect(resolveAdapter(swanAdvert(''), adapters)?.name).toBe('Hutbit');
+    });
+
+    it('post-discovery re-resolution stays on Hutbit — Robi S9 must not steal FFB3 (#278)', () => {
+      // Mirrors the esphome-proxy watcher: after GATT discovery the device info
+      // gains characteristicUuids (the Hutbit exposes an unused FFB3) and has no
+      // usable name. Without the Robi-side signature guard, Robi S9 (prio 40)
+      // would claim this and replay a handshake the Hutbit rejects.
+      const postDiscovery = swanAdvert('', [uuid16(0xffb1), uuid16(0xffb2), uuid16(0xffb3)]);
+      expect(resolveAdapter(postDiscovery, adapters)?.name).toBe('Hutbit');
+    });
+
+    it('does not shadow the Robi S9: nameless FFB0+FFB3 without the signature still resolves to Robi', () => {
+      const robiLike: BleDeviceInfo = {
+        localName: '',
+        serviceUuids: [uuid16(0xffb0)],
+        characteristicUuids: [uuid16(0xffb1), uuid16(0xffb2), uuid16(0xffb3)],
+      };
+      expect(resolveAdapter(robiLike, adapters)?.name).toBe('Robi S9');
+    });
+
+    // The OEM claim requires BOTH advertised services, not just the 0x02AC
+    // shape. 0x02AC is SIG-assigned to RTB Elektronik and the Lefu firmware
+    // squats on it, so the shape alone is too weak to claim a device on.
+    it('requires d618 alongside ffb0: the 0x02AC shape alone does not claim a device', () => {
+      const noD618 = swanAdvert();
+      noD618.serviceUuids = [uuid16(0xffb0)];
+      expect(makeAdapter().matches(noD618)).toBe(false);
+      expect(isHutbitOemAdvert(noD618)).toBe(false);
+    });
+
+    // Guards the symmetry between HutbitAdapter.matches() and the RobiS9
+    // bow-out. If Robi ever bows out of a WIDER set than Hutbit claims, this
+    // device is rejected by Robi, unclaimed by Hutbit, and swept up by MGB on
+    // the bare ffb0 descriptor claim, whose parser rejects every frame this
+    // family sends. Today it resolves to Robi and it must stay that way.
+    it('a nameless FFB0+FFB3 unit carrying the 0x02AC shape but no d618 still resolves to Robi', () => {
+      const robiLikeWithMfg: BleDeviceInfo = {
+        localName: '',
+        serviceUuids: [uuid16(0xffb0)],
+        characteristicUuids: [uuid16(0xffb1), uuid16(0xffb2), uuid16(0xffb3)],
+        manufacturerData: { id: 0x02ac, data: Buffer.from('7eb893ecb30301', 'hex') },
+      };
+      expect(resolveAdapter(robiLikeWithMfg, adapters)?.name).toBe('Robi S9');
+    });
+
+    // The noble target-MAC path builds its device record from GATT-discovered
+    // services, where d618 (an advertised 16-bit UUID, AD type 0x03) need not
+    // appear at all. The handler therefore unions the advertised UUIDs in; this
+    // pins the resulting shape, since without the union the signature check
+    // could never fire there and the unit fell through to MGB, whose parser
+    // rejects every frame this family sends.
+    it('claims a target-MAC record whose advertised d618 is unioned with GATT services', () => {
+      const targetMac: BleDeviceInfo = {
+        localName: 'SWAN',
+        // d618 from the advertisement, ffb0 from both, plus GATT-only services.
+        serviceUuids: [uuid16(0xd618), uuid16(0xffb0), uuid16(0x1800), uuid16(0x180a)],
+        characteristicUuids: [uuid16(0xffb1), uuid16(0xffb2), uuid16(0xffb3)],
+        manufacturerData: { id: 0x02ac, data: Buffer.from('7eb893ecb30301', 'hex') },
+      };
+      expect(resolveAdapter(targetMac, adapters)?.name).toBe('Hutbit');
+    });
+
+    // The Robi guard sits AFTER the robi-name check on purpose, so a correctly
+    // named Robi is never stolen even if it carries the full fingerprint.
+    it('a named Robi S9 carrying the full OEM fingerprint still resolves to Robi', () => {
+      const namedRobi = swanAdvert('Robi S9', [uuid16(0xffb1), uuid16(0xffb2), uuid16(0xffb3)]);
+      expect(resolveAdapter(namedRobi, adapters)?.name).toBe('Robi S9');
     });
   });
 

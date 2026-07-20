@@ -1,6 +1,14 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { detectPlatform } from '../../src/wizard/platform.js';
 
+// detectPlatform() is uncached and probes for docker / python3 / python via
+// execSync, each with its own 5s ceiling, so a single call can legitimately
+// spend many seconds in subprocesses and the consistency test below calls it
+// twice. That fits comfortably in the default 5s test timeout when this file
+// runs alone, but not when the full suite is competing for the CPU. Raise the
+// timeout for this file rather than let real machine load look like a failure.
+vi.setConfig({ testTimeout: 60_000 });
+
 // ─── detectPlatform() ────────────────────────────────────────────────────
 
 describe('detectPlatform()', () => {
